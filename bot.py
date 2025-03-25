@@ -181,49 +181,50 @@ async def on_raw_reaction_add(payload):
             await member.send(f"You have been granted access to the CTF channel for {event_name}.")
 
 async def send_help_message(channel):
-    help_message = (
-        "**Bot Commands:**\n"
-        "```markdown\n"
-        ">ctf create <ctftime_event_id>\n"
-        "   Create a new CTF channel and schedule an event.\n\n"
-        ">ctf archive\n"
-        "   Move the current CTF channel to the archive category.\n\n"
-        ">ctf upcoming\n"
-        "   List upcoming CTF events for the week. Only shows 5 events, check ctftime.org for more.\n\n"
-        ">ctf writeup\n"
-        "   Compile and upload writeups to REU1N0N Github repo. If there's an existing \n\n"
-        ">ask <question/idea> *\n"
-        "   Send an anonymous question/idea to the general anonymous questions channel.\n\n"
-        ">ask ctf <ctfchannel_name> <question/idea> *\n"
-        "   Send an anonymous question/idea to a specific CTF channel.\n\n"
-        ">bot help\n"
-        "   Show this help message.\n\n"
-        "* = Only works in DM, DM the bot\n"
-        "```"
-    )
-    await channel.send(help_message)
+    help_message = "\n".join([
+        "`>ctf create <ctftime_event_id>`",
+        "   - Create a new CTF channel and schedule an event.",
+        "`>ctf archive`",
+        "   - Move the current CTF channel to the archive category.",
+        "`>ctf upcoming`",
+        "   - List upcoming CTF events for the week. Only shows 5 events, check ctftime.org for more.",
+        "`>ctf writeup`",
+        "   - Compile and upload writeups to REU1N0N Github repo.",
+        "`>ask <question/idea> *`",
+        "   - Send an anonymous question/idea to the general anonymous questions channel.",
+        "`>ask ctf <ctfchannel_name> <question/idea> *`",
+        "   - Send an anonymous question/idea to a specific CTF channel.",
+        "`>bot help`",
+        "   - Show this help message.",
+        "`>bot help <command>`",
+        "   - Show detailed help for a specific command."
+    ])
+    embed = discord.Embed(title="🤖 Bot Commands", description=f"{help_message}", color=random.randint(0, 0xFFFFFF))
+    embed.set_footer(text=" Note: Commands marked with * only work in DMs. Direct Message the bot to use them.")
+    await channel.send(embed=embed)
 
 async def help_writeup_command(channel):
-    writeup_message = (
-        "**Command:** >ctf writeup\n\n"
-        "**What:** Upload all writeups from the current channel to the REU1N0N GitHub repo.\n\n"
-        "**When:** Use at the end of a CTF or when all writeups are ready.\n\n"
-        "**Format:** We accept markdown right after `Category` and `Challenge Name`. Here's a minimal example:\n"
-        "```\n"
-        "---\n"
-        "Category: crypto\n"
-        "Challenge Name: baby-rsa\n"
-        "\n"
-        "# Heading 1\n"
-        "### Heading 2\n"
-        "Regular text, `inline code`, and lists are supported.\n"
-        "- item 1\n"
-        "- item 2\n"
-        "\n"
-        "---\n"
-        "```\n"
-    )
-    await channel.send(writeup_message)
+    writeup_message = "\n".join([
+        "**Command:** `>ctf writeup`\n",
+        "**What:** Upload all writeups from the current channel to the REU1N0N GitHub repo.\n",
+        "**When:** Use at the end of a CTF or when all writeups are ready.\n",
+        "**Format:** We accept markdown right after `Category` and `Challenge Name`. Here's a minimal example:\n",
+        "```",
+        "---",
+        "Category: crypto",
+        "Challenge Name: baby-rsa",
+        "",
+        "# Heading 1",
+        "### Heading 2",
+        "Regular text, `inline code`, and lists are supported.",
+        "- item 1",
+        "- item 2",
+        "",
+        "---",
+        "```"
+    ])
+    embed = discord.Embed(title="", description=f"{writeup_message}", color=random.randint(0, 0xFFFFFF))
+    await channel.send(embed=embed)
 
 @bot.event
 async def on_ready():
@@ -318,6 +319,11 @@ async def on_message(message):
             if not writeup_messages:
                 await message.channel.send("No writeup found.")
                 return
+
+            exist = []
+            update = []
+            create = []
+
             for writeup_msg in writeup_messages:
                 try:
                     lines = writeup_msg.content.strip().split("\n")
@@ -343,13 +349,29 @@ async def on_message(message):
                     sender_username = writeup_msg.author.name
                     a = create_folder_structure(ctf, category, challenge_name, content, sender_username)
                     if a == "exist":
-                        await message.channel.send(f"`CTF-writeups/{datetime.now().year}/{ctf}/{category}-{challenge_name}.md` already exists. Skipping...")
+                        exist.append(f"```{category}-{challenge_name}.md```")
                     elif a == "updated":
-                        await message.channel.send(f"Updating `CTF-writeups/{datetime.now().year}/{ctf}/{category}-{challenge_name}.md`...")
+                        exist.append(f"```{category}-{challenge_name}.md```")
                     elif a == "created":
-                        await message.channel.send(f"Creating `CTF-writeups/{datetime.now().year}/{ctf}/{category}-{challenge_name}.md`...")
+                        exist.append(f"```{category}-{challenge_name}.md```")
                 except Exception as e:
                     print(f"Error processing writeup message: {str(e)}")
+
+            embed = discord.Embed(title="Writeup Statuses", description="", color=random.randint(0, 0xFFFFFF))
+            
+            if exist:
+                embed.add_field(name="Skipped (Already Exist)", value="".join(exist), inline=False)
+            if update:
+                embed.add_field(name="Updated", value="".join(update), inline=False)
+            if create:
+                embed.add_field(name="Created", value="".join(create), inline=False)
+            if not (exist or update or create):
+                embed.add_field(name="No Valid Writeups", value="No valid writeups were processed.", inline=False)
+
+            embed.add_field(name="", value=f"Writeups available at: https://github.com/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/tree/main/{PARENT_FOLDER}/{datetime.datetime.now().year}/{ctf}", inline=False)
+            # Send the embed
+            await message.channel.send(embed=embed)
+
             await message.channel.send("All previous writeup have been processed.")
         except Exception as e:
             await message.channel.send(f"Failed to process the request: {str(e)}")
