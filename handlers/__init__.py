@@ -31,6 +31,21 @@ from handlers.help import (
     SLASH_WRITEUP_HELP_MESSAGE,
 )
 
+from handlers.challenge import (
+    handle_chall_create,
+    handle_chall_solved,
+    handle_chall_working,
+    handle_chall_unsolved,
+    handle_chall_status,
+    # Slash command handlers
+    create_challenge_thread,
+    mark_solved,
+    mark_unsolved,
+    show_status,
+    delete_challenge,
+    auto_track_worker,
+)
+
 __all__ = [
     # CTF
     'handle_ctf_create',
@@ -53,4 +68,17 @@ __all__ = [
     'WRITEUP_HELP_MESSAGE',
     'SLASH_HELP_MESSAGE',
     'SLASH_WRITEUP_HELP_MESSAGE',
+    # Challenge tracking (legacy prefix)
+    'handle_chall_create',
+    'handle_chall_solved',
+    'handle_chall_working',
+    'handle_chall_unsolved',
+    'handle_chall_status',
+    # Challenge tracking (slash commands)
+    'create_challenge_thread',
+    'mark_solved',
+    'mark_unsolved',
+    'show_status',
+    'delete_challenge',
+    'auto_track_worker',
 ]

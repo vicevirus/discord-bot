@@ -4,6 +4,7 @@ Writeup handlers: quick submit, batch upload, and delete.
 
 import os
 import aiohttp
+import discord
 from datetime import datetime
 
 from config import CATEGORY_PATTERNS, CHALLENGE_PATTERNS
@@ -14,6 +15,13 @@ from services.github import (
     get_writeup_author,
     delete_writeup,
 )
+
+
+def get_ctf_name(channel):
+    """Get CTF name from channel or thread's parent."""
+    if isinstance(channel, discord.Thread):
+        return channel.parent.name
+    return channel.name
 
 
 # =============================================================================
@@ -137,7 +145,7 @@ async def handle_batch_writeup(message):
         await message.channel.send("❌ This command can only be used in a CTF channel.")
         return
     
-    ctf = message.channel.name
+    ctf = get_ctf_name(message.channel)
     await message.channel.send("🔍 Scanning channel for writeups...")
     
     # Fetch channel history
@@ -235,7 +243,7 @@ async def handle_quick_writeup(message):
         await message.channel.send("❌ This command can only be used in a CTF channel.")
         return
     
-    ctf = message.channel.name
+    ctf = get_ctf_name(message.channel)
     full_text = message.content
     from_message_txt = False
     
@@ -344,7 +352,7 @@ async def handle_writeup_delete(message):
         await message.channel.send("❌ This command can only be used in a CTF channel.")
         return
     
-    ctf = message.channel.name
+    ctf = get_ctf_name(message.channel)
     parts = message.content.split()
     
     # Parse cat: and title:

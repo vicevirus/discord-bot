@@ -37,6 +37,12 @@ from handlers import (
     send_writeup_help,
     SLASH_HELP_MESSAGE,
     SLASH_WRITEUP_HELP_MESSAGE,
+    # Challenge tracking
+    handle_chall_create,
+    handle_chall_solved,
+    handle_chall_working,
+    handle_chall_unsolved,
+    handle_chall_status,
 )
 
 
@@ -107,6 +113,8 @@ async def on_ready():
     # Sync slash commands to the specific guild for instant availability
     # (global sync can take up to 1 hour to propagate)
     try:
+        # Copy global commands to the guild for instant sync
+        bot.tree.copy_global_to(guild=guild)
         synced = await bot.tree.sync(guild=guild)
         print(f"Synced {len(synced)} slash command(s) to guild {guild.name}")
     except Exception as e:
@@ -163,6 +171,45 @@ async def slash_help_writeup(interaction: discord.Interaction):
     await interaction.response.send_message(SLASH_WRITEUP_HELP_MESSAGE, ephemeral=True)
 
 
+@bot.tree.command(name="chall", description="Create a challenge thread")
+@discord.app_commands.describe(
+    category="Challenge category (web, pwn, crypto, rev, misc, forensics, etc.)",
+    name="Challenge name"
+)
+async def slash_chall(interaction: discord.Interaction, category: str, name: str):
+    """Slash command: /chall <category> <name>"""
+    from handlers.challenge import create_challenge_thread
+    await create_challenge_thread(interaction, category, name)
+
+
+@bot.tree.command(name="solved", description="Mark challenge as solved (use in challenge thread)")
+async def slash_solved(interaction: discord.Interaction):
+    """Slash command: /solved"""
+    from handlers.challenge import mark_solved
+    await mark_solved(interaction)
+
+
+@bot.tree.command(name="unsolved", description="Reset challenge to unsolved")
+async def slash_unsolved(interaction: discord.Interaction):
+    """Slash command: /unsolved"""
+    from handlers.challenge import mark_unsolved
+    await mark_unsolved(interaction)
+
+
+@bot.tree.command(name="status", description="Show all challenges and progress")
+async def slash_status(interaction: discord.Interaction):
+    """Slash command: /status"""
+    from handlers.challenge import show_status
+    await show_status(interaction)
+
+
+@bot.tree.command(name="delchall", description="Delete this challenge (creator/admin only)")
+async def slash_delchall(interaction: discord.Interaction):
+    """Slash command: /delchall"""
+    from handlers.challenge import delete_challenge
+    await delete_challenge(interaction)
+
+
 # =============================================================================
 # MESSAGE HANDLER
 # =============================================================================
@@ -171,6 +218,14 @@ async def slash_help_writeup(interaction: discord.Interaction):
 async def on_message(message):
     """Main message handler for all prefix commands."""
     current_year = get_current_year()
+    
+    # =================================
+    # AUTO-TRACK CHALLENGE WORKERS
+    # =================================
+    # Anyone chatting in a challenge thread = working on it
+    if isinstance(message.channel, discord.Thread) and not message.author.bot:
+        from handlers.challenge import auto_track_worker
+        await auto_track_worker(message)
     
     # =================================
     # DM COMMANDS
@@ -250,6 +305,39 @@ async def on_message(message):
         except Exception as e:
             await message.channel.send(f"❌ Failed to delete writeup: {str(e)}")
             print(f"Error deleting writeup: {str(e)}")
+    
+    # =================================
+    # CHALLENGE TRACKING
+    # =================================
+    elif message.content.startswith('>chall '):
+        try:
+            await handle_chall_create(message)
+        except Exception as e:
+            await message.channel.send(f"❌ Failed to create challenge: {str(e)}")
+    
+    elif message.content.strip() == '>solved':
+        try:
+            await handle_chall_solved(message)
+        except Exception as e:
+            await message.channel.send(f"❌ Failed to mark solved: {str(e)}")
+    
+    elif message.content.strip() == '>working':
+        try:
+            await handle_chall_working(message)
+        except Exception as e:
+            await message.channel.send(f"❌ Failed to mark working: {str(e)}")
+    
+    elif message.content.strip() == '>unsolved':
+        try:
+            await handle_chall_unsolved(message)
+        except Exception as e:
+            await message.channel.send(f"❌ Failed to mark unsolved: {str(e)}")
+    
+    elif message.content.strip() == '>status':
+        try:
+            await handle_chall_status(bot, message)
+        except Exception as e:
+            await message.channel.send(f"❌ Failed to get status: {str(e)}")
     
     # =================================
     # HELP (CHANNEL)
