@@ -86,3 +86,90 @@ def update_file_on_github(file_path, file_content, sha, headers):
         print(f"File updated successfully: {file_path}")
     else:
         print(f"Failed to update file {file_path}: {response.status_code} - {response.text}")
+
+def upload_binary_to_github(file_path, binary_content):
+    """Upload binary file (images, etc) to GitHub and return the raw URL"""
+    headers = {
+        "Authorization": f"token {GITHUB_PAT}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    # Check if file exists
+    response = requests.get(f"{GITHUB_API_URL}/{file_path}", headers=headers)
+    sha = None
+    if response.status_code == 200:
+        sha = response.json()["sha"]
+    
+    encoded_content = base64.b64encode(binary_content).decode("utf-8")
+    data = {
+        "message": f"Add attachment: {file_path}",
+        "content": encoded_content,
+        "branch": "main"
+    }
+    if sha:
+        data["sha"] = sha
+    
+    response = requests.put(f"{GITHUB_API_URL}/{file_path}", json=data, headers=headers)
+    if response.status_code in [200, 201]:
+        print(f"Binary uploaded successfully: {file_path}")
+        # Return raw GitHub URL
+        raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/main/{file_path}"
+        return raw_url
+    else:
+        print(f"Failed to upload binary {file_path}: {response.status_code} - {response.text}")
+        return None
+
+def get_writeup_author(ctf, category, challenge_name):
+    """Get the author of a writeup from GitHub"""
+    headers = {
+        "Authorization": f"token {GITHUB_PAT}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    current_year = str(datetime.now().year)
+    writeup_file = f"{category}-{challenge_name}.md"
+    writeup_path = safe_join(PARENT_FOLDER, current_year, ctf, writeup_file)
+    
+    response = requests.get(f"{GITHUB_API_URL}/{writeup_path}", headers=headers)
+    if response.status_code != 200:
+        return None
+    
+    content = base64.b64decode(response.json()["content"]).decode("utf-8")
+    
+    # Look for "Solved by: username" at the end
+    for line in content.split('\n')[::-1]:  # reverse to find last occurrence
+        if line.strip().startswith("Solved by:"):
+            return line.split("Solved by:")[1].strip()
+    return None
+
+def delete_writeup(ctf, category, challenge_name):
+    headers = {
+        "Authorization": f"token {GITHUB_PAT}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    current_year = str(datetime.now().year)
+    writeup_file = f"{category}-{challenge_name}.md"
+    writeup_path = safe_join(PARENT_FOLDER, current_year, ctf, writeup_file)
+    
+    # First get the file to get its SHA
+    response = requests.get(f"{GITHUB_API_URL}/{writeup_path}", headers=headers)
+    if response.status_code == 404:
+        return "not_found"
+    elif response.status_code != 200:
+        print(f"Failed to get file {writeup_path}: {response.status_code}")
+        return "error"
+    
+    sha = response.json()["sha"]
+    
+    # Delete the file
+    data = {
+        "message": f"Delete writeup: {writeup_path}",
+        "sha": sha,
+        "branch": "main"
+    }
+    response = requests.delete(f"{GITHUB_API_URL}/{writeup_path}", json=data, headers=headers)
+    if response.status_code == 200:
+        print(f"File deleted successfully: {writeup_path}")
+        return "deleted"
+    else:
+        print(f"Failed to delete file {writeup_path}: {response.status_code} - {response.text}")
+        return "error"
