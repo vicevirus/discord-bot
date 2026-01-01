@@ -54,8 +54,9 @@ def convert_to_myt(utc_time_str):
 
 async def fetch_event_details(event_id):
     url = f'https://ctftime.org/api/v1/events/{event_id}/'
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
+        async with session.get(url, headers=headers) as response:
             return await response.json() if response.status == 200 else None
 
 async def fetch_image(url):
@@ -77,8 +78,9 @@ async def fetch_upcoming_events():
     start = int(datetime.now().timestamp())
     end = int((datetime.now() + timedelta(weeks=2)).timestamp())
     url = f'https://ctftime.org/api/v1/events/?limit=5&start={start}&finish={end}'
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
+        async with session.get(url, headers=headers) as response:
             return await response.json() if response.status == 200 else None
 
 async def check_yearly_update():
