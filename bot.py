@@ -263,12 +263,15 @@ async def on_message(message):
             await message.channel.send("You must be a member of the server to use this command.")
     # This part is for processing messages via Channel
     if message.content.startswith('>ctf create ') and message.channel.id == SPAMMING_CHANNEL_ID:
-        event_id = message.content[len('>ctf create '):].strip()
-        event = await fetch_event_details(event_id)
-        if event:
-            new_channel, ctf_message, interested_role = await create_channel_and_event(message.guild, event)
+        if message.author.guild_permissions.administrator:
+            event_id = message.content[len('>ctf create '):].strip()
+            event = await fetch_event_details(event_id)
+            if event:
+                new_channel, ctf_message, interested_role = await create_channel_and_event(message.guild, event)
+            else:
+                await message.channel.send("Failed to fetch event data. Please check the event ID.")
         else:
-            await message.channel.send("Failed to fetch event data. Please check the event ID.")
+            await message.channel.send("You do not have permission to create CTF channels.")
 
     elif message.content.startswith('>ctf archive'):
         if message.channel.category and message.channel.category.name == f'ctf-{current_year}':
