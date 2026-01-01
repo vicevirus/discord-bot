@@ -343,8 +343,8 @@ async def on_message(message):
                             content_start_index = i + 2
                             break
                     if not category or not challenge_name or content_start_index is None:
-                        await message.channel.send("Missing required fields (Category or Challenge Name).")
-                        return
+                        await message.channel.send(f"{writeup_msg.author.mention} Missing required fields (Category or Challenge Name) in message: https://discord.com/channels/{message.guild.id}/{message.channel.id}/{writeup_msg.id}")
+                        continue
                     category = normalize_name(category)
                     challenge_name = normalize_name(challenge_name)
                     content = "\n".join(lines[content_start_index:-1])
@@ -357,6 +357,7 @@ async def on_message(message):
                     elif a == "created":
                         await message.channel.send(f"Creating `CTF-writeups/{datetime.now().year}/{ctf}/{category}-{challenge_name}.md`...")
                 except Exception as e:
+                    await message.channel.send(f"{writeup_msg.author.mention} Error processing your writeup in message: https://discord.com/channels/{message.guild.id}/{message.channel.id}/{writeup_msg.id} - {str(e)}")
                     print(f"Error processing writeup message: {str(e)}")
             await message.channel.send("All previous writeup have been processed.")
         except Exception as e:
