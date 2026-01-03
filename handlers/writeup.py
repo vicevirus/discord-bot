@@ -15,6 +15,8 @@ from services.github import (
     get_writeup_author,
     delete_writeup,
     list_writeups,
+    list_writeups_by_author,
+    list_writeup_authors,
 )
 
 
@@ -23,6 +25,34 @@ def get_ctf_name(channel):
     if isinstance(channel, discord.Thread):
         return channel.parent.name
     return channel.name
+
+
+def get_ctf_year(channel):
+    """
+    Get the year from the channel's category name.
+    Categories are named like 'ctf-2025', 'archive-2025', etc.
+    Falls back to current year if not found.
+    """
+    # Get the actual channel (not thread)
+    if isinstance(channel, discord.Thread):
+        channel = channel.parent
+    
+    if channel and channel.category:
+        cat_name = channel.category.name.lower()
+        # Extract year from category name (e.g., 'ctf-2025' -> '2025')
+        for part in cat_name.split('-'):
+            if part.isdigit() and len(part) == 4:
+                return part
+    
+    # Fallback: try to extract from CTF name itself (e.g., 'pingctf-2025')
+    ctf_name = get_ctf_name(channel)
+    if ctf_name:
+        for part in ctf_name.split('-'):
+            if part.isdigit() and len(part) == 4:
+                return part
+    
+    # Ultimate fallback: current year
+    return str(datetime.now().year)
 
 
 # =============================================================================
@@ -73,7 +103,7 @@ def parse_writeup_metadata(lines):
     return category, challenge_name, content_start_index, errors
 
 
-async def process_batch_writeup(message, writeup_msg, ctf):
+async def process_batch_writeup(message, writeup_msg, ctf, year):
     """
     Process a single writeup message in batch mode.
     
@@ -125,7 +155,7 @@ async def process_batch_writeup(message, writeup_msg, ctf):
     
     # Upload to GitHub
     sender_username = writeup_msg.author.name
-    result = create_folder_structure(ctf, category, challenge_name, content, sender_username)
+    result = create_folder_structure(ctf, category, challenge_name, content, sender_username, year)
     
     if result == "exist":
         await message.channel.send(f"⏭️ `{category}-{challenge_name}.md` already exists. Skipping...")
@@ -147,6 +177,7 @@ async def handle_batch_writeup(message):
         return
     
     ctf = get_ctf_name(message.channel)
+    year = get_ctf_year(message.channel)
     await message.channel.send("🔍 Scanning channel for writeups...")
     
     # Fetch channel history
@@ -163,7 +194,7 @@ async def handle_batch_writeup(message):
     
     for writeup_msg in writeup_messages:
         try:
-            success, status = await process_batch_writeup(message, writeup_msg, ctf)
+            success, status = await process_batch_writeup(message, writeup_msg, ctf, year)
             if success:
                 processed += 1
             elif status != "not_writeup":
@@ -245,6 +276,7 @@ async def handle_quick_writeup(message):
         return
     
     ctf = get_ctf_name(message.channel)
+    year = get_ctf_year(message.channel)
     full_text = message.content
     from_message_txt = False
     
@@ -324,10 +356,9 @@ async def handle_quick_writeup(message):
     sender_username = message.author.name
     
     # Upload to GitHub
-    result = create_folder_structure(ctf, category_normalized, challenge_normalized, full_content, sender_username)
+    result = create_folder_structure(ctf, category_normalized, challenge_normalized, full_content, sender_username, year)
     
     # Build GitHub URL
-    year = datetime.now().year
     github_url = (
         f"https://github.com/{os.getenv('GITHUB_REPO_OWNER')}/{os.getenv('GITHUB_REPO_NAME')}"
         f"/blob/main/{os.getenv('PARENT_FOLDER')}/{year}/{ctf}/{category_normalized}-{challenge_normalized}.md"
@@ -354,6 +385,7 @@ async def handle_writeup_delete(message):
         return
     
     ctf = get_ctf_name(message.channel)
+    year = get_ctf_year(message.channel)
     parts = message.content.split()
     
     # Parse cat: and title:
@@ -376,7 +408,7 @@ async def handle_writeup_delete(message):
     
     # Check if user is author or admin
     is_admin = message.author.guild_permissions.administrator
-    author = get_writeup_author(ctf, category_normalized, challenge_normalized)
+    author = get_writeup_author(ctf, category_normalized, challenge_normalized, year)
     
     if author is None:
         await message.channel.send(f"❌ Writeup not found: `{category_normalized}-{challenge_normalized}.md`")
@@ -389,7 +421,7 @@ async def handle_writeup_delete(message):
         return
     
     # Delete from GitHub
-    result = delete_writeup(ctf, category_normalized, challenge_normalized)
+    result = delete_writeup(ctf, category_normalized, challenge_normalized, year)
     
     if result == "deleted":
         await message.channel.send(f"🗑️ Writeup deleted: `{category_normalized}-{challenge_normalized}.md`")
@@ -406,12 +438,13 @@ async def handle_writeup_delete(message):
 class DeleteWriteupConfirmView(discord.ui.View):
     """Confirmation view for writeup deletion with nice buttons."""
     
-    def __init__(self, ctf: str, category: str, challenge: str, author: str):
+    def __init__(self, ctf: str, category: str, challenge: str, author: str, year: str):
         super().__init__(timeout=60)  # 60 second timeout
         self.ctf = ctf
         self.category = category
         self.challenge = challenge
         self.author = author
+        self.year = year
         self.confirmed = False
     
     @discord.ui.button(label="🗑️ Yes, Delete", style=discord.ButtonStyle.danger)
@@ -419,12 +452,15 @@ class DeleteWriteupConfirmView(discord.ui.View):
         """Confirm deletion."""
         self.confirmed = True
         
-        # Disable all buttons
+        # Disable all buttons immediately
         for item in self.children:
             item.disabled = True
         
-        # Delete from GitHub
-        result = delete_writeup(self.ctf, self.category, self.challenge)
+        # Defer the response first to avoid timeout
+        await interaction.response.defer()
+        
+        # Delete from GitHub (this can take a moment)
+        result = delete_writeup(self.ctf, self.category, self.challenge, self.year)
         
         if result == "deleted":
             embed = discord.Embed(
@@ -442,7 +478,7 @@ class DeleteWriteupConfirmView(discord.ui.View):
                 color=discord.Color.red()
             )
         
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.edit_original_response(embed=embed, view=self)
         self.stop()
     
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
@@ -481,11 +517,12 @@ async def slash_delete_writeup(interaction: discord.Interaction, writeup: str):
         return
     
     ctf = get_ctf_name(interaction.channel)
+    year = get_ctf_year(interaction.channel)
     
     # Handle truncated names - find the actual file by prefix match
     actual_writeup = writeup
     if len(writeup) >= 97:  # Might be truncated
-        all_writeups = list_writeups(ctf)
+        all_writeups = list_writeups(ctf, year)
         for w in all_writeups:
             base_name = w[:-3] if w.endswith('.md') else w
             if base_name.startswith(writeup):
@@ -513,7 +550,7 @@ async def slash_delete_writeup(interaction: discord.Interaction, writeup: str):
     challenge = parts[1].replace(".md", "").strip()
     
     # Get writeup author
-    author = get_writeup_author(ctf, category, challenge)
+    author = get_writeup_author(ctf, category, challenge, year)
     
     if author is None:
         embed = discord.Embed(
@@ -552,7 +589,7 @@ async def slash_delete_writeup(interaction: discord.Interaction, writeup: str):
     embed.add_field(name="✍️ Author", value=f"`{author}`", inline=True)
     embed.set_footer(text="This confirmation will expire in 60 seconds.")
     
-    view = DeleteWriteupConfirmView(ctf, category, challenge, author)
+    view = DeleteWriteupConfirmView(ctf, category, challenge, author, year)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
@@ -567,7 +604,8 @@ async def writeup_autocomplete(interaction: discord.Interaction, current: str) -
         return []
     
     ctf = get_ctf_name(interaction.channel)
-    writeups = list_writeups(ctf)
+    year = get_ctf_year(interaction.channel)
+    writeups = list_writeups(ctf, year)
     
     if not writeups:
         return []
@@ -596,3 +634,170 @@ async def writeup_autocomplete(interaction: discord.Interaction, current: str) -
         choices.append(app_commands.Choice(name=display, value=value))
     
     return choices
+
+
+# =============================================================================
+# SLASH COMMAND: BATCH DELETE WRITEUPS BY USER (ADMIN ONLY)
+# =============================================================================
+
+class BatchDeleteConfirmView(discord.ui.View):
+    """Confirmation view for batch writeup deletion."""
+    
+    def __init__(self, ctf: str, username: str, writeups: list, year: int):
+        super().__init__(timeout=60)
+        self.ctf = ctf
+        self.username = username
+        self.writeups = writeups
+        self.year = year
+    
+    @discord.ui.button(label="🗑️ Delete All", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Confirm batch deletion."""
+        # Disable all buttons and show "deleting..." immediately
+        for item in self.children:
+            item.disabled = True
+        
+        embed = discord.Embed(
+            title="⏳ Deleting...",
+            description=f"Deleting {len(self.writeups)} writeups by `{self.username}`...",
+            color=discord.Color.blue()
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+        
+        # Delete each writeup (this is slow)
+        deleted = 0
+        failed = 0
+        
+        for filename in self.writeups:
+            base_name = filename[:-3] if filename.endswith('.md') else filename
+            if "-" not in base_name:
+                failed += 1
+                continue
+            
+            parts = base_name.split("-", 1)
+            category, challenge = parts[0], parts[1]
+            
+            result = delete_writeup(self.ctf, category, challenge, self.year)
+            if result == "deleted":
+                deleted += 1
+            else:
+                failed += 1
+        
+        embed = discord.Embed(
+            title="✅ Batch Delete Complete",
+            description=f"Deleted **{deleted}** writeups by `{self.username}`",
+            color=discord.Color.green()
+        )
+        if failed > 0:
+            embed.add_field(name="⚠️ Failed", value=str(failed), inline=True)
+        embed.add_field(name="CTF", value=self.ctf, inline=True)
+        embed.set_footer(text=f"Deleted by {interaction.user.display_name}")
+        
+        await interaction.edit_original_response(embed=embed, view=self)
+        self.stop()
+    
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Cancel deletion."""
+        for item in self.children:
+            item.disabled = True
+        
+        embed = discord.Embed(
+            title="🚫 Cancelled",
+            description="Batch deletion cancelled.",
+            color=discord.Color.greyple()
+        )
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+
+
+async def slash_batch_delete_writeup(interaction: discord.Interaction, username: str):
+    """
+    Slash command handler for /delwriteups (admin only).
+    Batch delete all writeups by a specific user.
+    """
+    # Admin check
+    if not interaction.user.guild_permissions.administrator:
+        embed = discord.Embed(
+            title="🔒 Admin Only",
+            description="Only administrators can use batch delete.",
+            color=discord.Color.red()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    # Check if in CTF channel
+    if not is_ctf_channel(interaction.channel):
+        await interaction.response.send_message(
+            "❌ This command can only be used in a CTF channel!",
+            ephemeral=True
+        )
+        return
+    
+    # Defer immediately - the GitHub API calls take time
+    await interaction.response.defer(ephemeral=True)
+    
+    ctf = get_ctf_name(interaction.channel)
+    year = get_ctf_year(interaction.channel)
+    
+    # Find all writeups by this user (this is slow)
+    writeups = list_writeups_by_author(ctf, username, year)
+    
+    if not writeups:
+        embed = discord.Embed(
+            title="📭 No Writeups Found",
+            description=f"No writeups found by `{username}` in **{ctf}**",
+            color=discord.Color.orange()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+    
+    # Build confirmation embed
+    writeup_list = "\n".join([f"• `{w}`" for w in writeups[:10]])
+    if len(writeups) > 10:
+        writeup_list += f"\n... and {len(writeups) - 10} more"
+    
+    embed = discord.Embed(
+        title="⚠️ Confirm Batch Delete",
+        description=f"Delete **{len(writeups)}** writeups by `{username}`?\n\n**This cannot be undone!**",
+        color=discord.Color.yellow()
+    )
+    embed.add_field(name="📁 CTF", value=f"`{ctf}`", inline=True)
+    embed.add_field(name="👤 Author", value=f"`{username}`", inline=True)
+    embed.add_field(name="📝 Writeups", value=writeup_list, inline=False)
+    embed.set_footer(text="This confirmation will expire in 60 seconds.")
+    
+    view = BatchDeleteConfirmView(ctf, username, writeups, year)
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+
+async def author_autocomplete(interaction: discord.Interaction, current: str) -> list:
+    """
+    Autocomplete for author usernames.
+    Uses Discord server members for fast autocomplete.
+    """
+    from discord import app_commands
+    
+    if not interaction.guild:
+        return []
+    
+    # Use guild members for autocomplete (instant, no API calls)
+    members = interaction.guild.members
+    
+    # Filter by current input and get usernames
+    filtered = []
+    seen = set()
+    for member in members:
+        if member.bot:
+            continue
+        username = member.name
+        if username in seen:
+            continue
+        if current.lower() in username.lower():
+            seen.add(username)
+            filtered.append(username)
+        if len(filtered) >= 25:
+            break
+    
+    return [app_commands.Choice(name=u, value=u) for u in sorted(filtered)]

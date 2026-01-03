@@ -1,6 +1,7 @@
 import os
 import requests
 import base64
+import re
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -12,6 +13,7 @@ GITHUB_PAT = os.getenv("GITHUB_PAT")
 PARENT_FOLDER = os.getenv("PARENT_FOLDER")
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/contents"
 
+
 def safe_join(base, *paths):
     joined = os.path.join(base, *paths)
     normalized = os.path.normpath(joined)
@@ -19,7 +21,20 @@ def safe_join(base, *paths):
         raise ValueError("Path traversal detected")
     return normalized
 
-def create_folder_structure(ctf, category, challenge_name, content, sender_username):
+
+def extract_year_from_ctf(ctf_name):
+    """
+    Extract year from CTF name (e.g., 'pingctf-2025' -> '2025').
+    Falls back to current year if not found.
+    """
+    # Look for 4-digit year pattern
+    match = re.search(r'20\d{2}', ctf_name)
+    if match:
+        return match.group()
+    return str(datetime.now().year)
+
+
+def create_folder_structure(ctf, category, challenge_name, content, sender_username, year=None):
     headers = {
         "Authorization": f"token {GITHUB_PAT}",
         "Accept": "application/vnd.github.v3+json"
@@ -27,8 +42,12 @@ def create_folder_structure(ctf, category, challenge_name, content, sender_usern
     content_with_author = f"{content}\n\nSolved by: {sender_username}"
     parent_path = PARENT_FOLDER
     create_folder_on_github(parent_path, headers)
-    current_year = str(datetime.now().year)
-    challenge_path = safe_join(parent_path, current_year, ctf)
+    
+    # Use provided year or extract from CTF name
+    if year is None:
+        year = extract_year_from_ctf(ctf)
+    
+    challenge_path = safe_join(parent_path, year, ctf)
     create_folder_on_github(challenge_path, headers)
     writeup_file = f"{category}-{challenge_name}.md"
     writeup_path = safe_join(challenge_path, writeup_file)
@@ -49,6 +68,7 @@ def create_folder_structure(ctf, category, challenge_name, content, sender_usern
         upload_file_to_github(writeup_path, content_with_author, headers)
         return "created"
 
+
 def create_folder_on_github(folder_path, headers):
     placeholder_file = f"{folder_path}/.gitkeep"
     data = {
@@ -59,6 +79,7 @@ def create_folder_on_github(folder_path, headers):
     response = requests.put(f"{GITHUB_API_URL}/{placeholder_file}", json=data, headers=headers)
     if response.status_code not in [201, 422]:
         print(f"Failed to create folder {folder_path}: {response.status_code} - {response.text}")
+
 
 def upload_file_to_github(file_path, file_content, headers):
     encoded_content = file_content.encode("utf-8")
@@ -73,6 +94,7 @@ def upload_file_to_github(file_path, file_content, headers):
     else:
         print(f"Failed to upload file {file_path}: {response.status_code} - {response.text}")
 
+
 def update_file_on_github(file_path, file_content, sha, headers):
     encoded_content = base64.b64encode(file_content.encode("utf-8")).decode("utf-8")
     data = {
@@ -86,6 +108,7 @@ def update_file_on_github(file_path, file_content, sha, headers):
         print(f"File updated successfully: {file_path}")
     else:
         print(f"Failed to update file {file_path}: {response.status_code} - {response.text}")
+
 
 def upload_binary_to_github(file_path, binary_content):
     """Upload binary file (images, etc) to GitHub and return the raw URL"""
@@ -119,15 +142,19 @@ def upload_binary_to_github(file_path, binary_content):
         print(f"Failed to upload binary {file_path}: {response.status_code} - {response.text}")
         return None
 
-def get_writeup_author(ctf, category, challenge_name):
+
+def get_writeup_author(ctf, category, challenge_name, year=None):
     """Get the author of a writeup from GitHub"""
     headers = {
         "Authorization": f"token {GITHUB_PAT}",
         "Accept": "application/vnd.github.v3+json"
     }
-    current_year = str(datetime.now().year)
+    
+    if year is None:
+        year = extract_year_from_ctf(ctf)
+    
     writeup_file = f"{category}-{challenge_name}.md"
-    writeup_path = safe_join(PARENT_FOLDER, current_year, ctf, writeup_file)
+    writeup_path = safe_join(PARENT_FOLDER, year, ctf, writeup_file)
     
     response = requests.get(f"{GITHUB_API_URL}/{writeup_path}", headers=headers)
     if response.status_code != 200:
@@ -141,14 +168,18 @@ def get_writeup_author(ctf, category, challenge_name):
             return line.split("Solved by:")[1].strip()
     return None
 
-def delete_writeup(ctf, category, challenge_name):
+
+def delete_writeup(ctf, category, challenge_name, year=None):
     headers = {
         "Authorization": f"token {GITHUB_PAT}",
         "Accept": "application/vnd.github.v3+json"
     }
-    current_year = str(datetime.now().year)
+    
+    if year is None:
+        year = extract_year_from_ctf(ctf)
+    
     writeup_file = f"{category}-{challenge_name}.md"
-    writeup_path = safe_join(PARENT_FOLDER, current_year, ctf, writeup_file)
+    writeup_path = safe_join(PARENT_FOLDER, year, ctf, writeup_file)
     
     # First get the file to get its SHA
     response = requests.get(f"{GITHUB_API_URL}/{writeup_path}", headers=headers)
@@ -169,13 +200,60 @@ def delete_writeup(ctf, category, challenge_name):
     response = requests.delete(f"{GITHUB_API_URL}/{writeup_path}", json=data, headers=headers)
     if response.status_code == 200:
         print(f"File deleted successfully: {writeup_path}")
+        
+        # Also delete associated assets (files starting with challenge_name-)
+        delete_writeup_assets(ctf, challenge_name, year)
+        
         return "deleted"
     else:
         print(f"Failed to delete file {writeup_path}: {response.status_code} - {response.text}")
         return "error"
 
 
-def list_writeups(ctf):
+def delete_writeup_assets(ctf, challenge_name, year=None):
+    """
+    Delete all assets associated with a writeup.
+    Assets are named: {challenge_name}-{original_filename}
+    """
+    headers = {
+        "Authorization": f"token {GITHUB_PAT}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    if year is None:
+        year = extract_year_from_ctf(ctf)
+    
+    assets_path = safe_join(PARENT_FOLDER, year, ctf, "assets")
+    
+    # List all files in assets folder
+    response = requests.get(f"{GITHUB_API_URL}/{assets_path}", headers=headers)
+    if response.status_code != 200:
+        return  # No assets folder or error
+    
+    files = response.json()
+    if not isinstance(files, list):
+        return
+    
+    # Find and delete files matching challenge_name-*
+    prefix = f"{challenge_name}-"
+    for f in files:
+        if f["type"] == "file" and f["name"].startswith(prefix):
+            file_path = f"{assets_path}/{f['name']}"
+            sha = f["sha"]
+            
+            data = {
+                "message": f"Delete asset: {f['name']}",
+                "sha": sha,
+                "branch": "main"
+            }
+            del_response = requests.delete(f"{GITHUB_API_URL}/{file_path}", json=data, headers=headers)
+            if del_response.status_code == 200:
+                print(f"Asset deleted: {f['name']}")
+            else:
+                print(f"Failed to delete asset {f['name']}: {del_response.status_code}")
+
+
+def list_writeups(ctf, year=None):
     """
     List all writeups for a CTF.
     Returns list of writeup filenames (e.g., ['crypto-baby-rsa.md', 'web-sqli.md'])
@@ -184,8 +262,11 @@ def list_writeups(ctf):
         "Authorization": f"token {GITHUB_PAT}",
         "Accept": "application/vnd.github.v3+json"
     }
-    current_year = str(datetime.now().year)
-    ctf_path = safe_join(PARENT_FOLDER, current_year, ctf)
+    
+    if year is None:
+        year = extract_year_from_ctf(ctf)
+    
+    ctf_path = safe_join(PARENT_FOLDER, year, ctf)
     
     response = requests.get(f"{GITHUB_API_URL}/{ctf_path}", headers=headers)
     if response.status_code != 200:
@@ -202,3 +283,87 @@ def list_writeups(ctf):
     ]
     
     return sorted(writeups)
+
+
+def list_writeups_by_author(ctf, author, year=None):
+    """
+    List all writeups for a CTF by a specific author.
+    Returns list of filenames.
+    """
+    headers = {
+        "Authorization": f"token {GITHUB_PAT}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    if year is None:
+        year = extract_year_from_ctf(ctf)
+    
+    ctf_path = safe_join(PARENT_FOLDER, year, ctf)
+    
+    response = requests.get(f"{GITHUB_API_URL}/{ctf_path}", headers=headers)
+    if response.status_code != 200:
+        return []
+    
+    files = response.json()
+    if not isinstance(files, list):
+        return []
+    
+    # Filter for .md files
+    md_files = [f["name"] for f in files if f["type"] == "file" and f["name"].endswith(".md")]
+    
+    matches = []
+    for filename in md_files:
+        # Parse category-challenge from filename
+        base_name = filename[:-3]  # Remove .md
+        if "-" not in base_name:
+            continue
+        parts = base_name.split("-", 1)
+        category, challenge = parts[0], parts[1]
+        
+        # Get author of this writeup
+        file_author = get_writeup_author(ctf, category, challenge, year)
+        if file_author and file_author.lower() == author.lower():
+            matches.append(filename)
+    
+    return matches
+
+
+def list_writeup_authors(ctf, year=None):
+    """
+    List all unique authors who have writeups in a CTF.
+    Returns list of usernames.
+    """
+    headers = {
+        "Authorization": f"token {GITHUB_PAT}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    if year is None:
+        year = extract_year_from_ctf(ctf)
+    
+    ctf_path = safe_join(PARENT_FOLDER, year, ctf)
+    
+    response = requests.get(f"{GITHUB_API_URL}/{ctf_path}", headers=headers)
+    if response.status_code != 200:
+        return []
+    
+    files = response.json()
+    if not isinstance(files, list):
+        return []
+    
+    # Filter for .md files
+    md_files = [f["name"] for f in files if f["type"] == "file" and f["name"].endswith(".md")]
+    
+    authors = set()
+    for filename in md_files:
+        base_name = filename[:-3]
+        if "-" not in base_name:
+            continue
+        parts = base_name.split("-", 1)
+        category, challenge = parts[0], parts[1]
+        
+        author = get_writeup_author(ctf, category, challenge, year)
+        if author:
+            authors.add(author)
+    
+    return sorted(list(authors))

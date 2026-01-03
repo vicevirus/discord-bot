@@ -18,6 +18,8 @@ from handlers.writeup import (
     handle_writeup_delete,
     slash_delete_writeup,
     writeup_autocomplete,
+    slash_batch_delete_writeup,
+    author_autocomplete,
 )
 
 from handlers.anonymous import (
@@ -63,6 +65,8 @@ __all__ = [
     'handle_writeup_delete',
     'slash_delete_writeup',
     'writeup_autocomplete',
+    'slash_batch_delete_writeup',
+    'author_autocomplete',
     # Anonymous
     'handle_anonymous_question',
     # Help

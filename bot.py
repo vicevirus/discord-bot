@@ -32,6 +32,8 @@ from handlers import (
     handle_writeup_delete,
     slash_delete_writeup,
     writeup_autocomplete,
+    slash_batch_delete_writeup,
+    author_autocomplete,
     # Anonymous handler
     handle_anonymous_question,
     # Help
@@ -220,6 +222,16 @@ async def slash_delchall(interaction: discord.Interaction):
 async def slash_delwriteup(interaction: discord.Interaction, writeup: str):
     """Slash command: /delwriteup"""
     await slash_delete_writeup(interaction, writeup)
+
+
+@bot.tree.command(name="delwriteups", description="[ADMIN] Batch delete all writeups by a user")
+@discord.app_commands.describe(
+    username="Discord username whose writeups to delete"
+)
+@discord.app_commands.autocomplete(username=author_autocomplete)
+async def slash_delwriteups(interaction: discord.Interaction, username: str):
+    """Slash command: /delwriteups (admin only)"""
+    await slash_batch_delete_writeup(interaction, username)
 
 
 # =============================================================================

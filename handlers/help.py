@@ -51,6 +51,7 @@ HELP_MESSAGE = """**Bot Commands:**
 /status                    View all challenges
 /delchall                  Delete challenge (creator/admin)
 /delwriteup                Delete writeup (author/admin)
+/delwriteups <user>        [ADMIN] Batch delete by user
 ```
 Anyone chatting in a thread = auto-tracked as working"""
 
@@ -114,6 +115,7 @@ SLASH_HELP_MESSAGE = """**Bot Commands:**
 /status                    View all challenges
 /delchall                  Delete challenge (creator/admin)
 /delwriteup                Delete writeup (author/admin)
+/delwriteups <user>        [ADMIN] Batch delete by user
 ```
 Anyone chatting in a thread = auto-tracked as working
 
