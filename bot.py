@@ -30,6 +30,8 @@ from handlers import (
     handle_quick_writeup,
     handle_batch_writeup,
     handle_writeup_delete,
+    slash_delete_writeup,
+    writeup_autocomplete,
     # Anonymous handler
     handle_anonymous_question,
     # Help
@@ -208,6 +210,16 @@ async def slash_delchall(interaction: discord.Interaction):
     """Slash command: /delchall"""
     from handlers.challenge import delete_challenge
     await delete_challenge(interaction)
+
+
+@bot.tree.command(name="delwriteup", description="Delete a writeup (author/admin only)")
+@discord.app_commands.describe(
+    writeup="Select the writeup to delete"
+)
+@discord.app_commands.autocomplete(writeup=writeup_autocomplete)
+async def slash_delwriteup(interaction: discord.Interaction, writeup: str):
+    """Slash command: /delwriteup"""
+    await slash_delete_writeup(interaction, writeup)
 
 
 # =============================================================================

@@ -50,6 +50,7 @@ HELP_MESSAGE = """**Bot Commands:**
 /unsolved                  Reset status (in thread)  
 /status                    View all challenges
 /delchall                  Delete challenge (creator/admin)
+/delwriteup                Delete writeup (author/admin)
 ```
 Anyone chatting in a thread = auto-tracked as working"""
 
@@ -112,6 +113,7 @@ SLASH_HELP_MESSAGE = """**Bot Commands:**
 /unsolved                  Reset status (in thread)
 /status                    View all challenges
 /delchall                  Delete challenge (creator/admin)
+/delwriteup                Delete writeup (author/admin)
 ```
 Anyone chatting in a thread = auto-tracked as working
 
@@ -144,6 +146,7 @@ Then run `>ctf writeup` to batch upload all.
 Note: No image/attachment support - use Method 1 for images!
 
 **Delete Writeup**
+Use `/delwriteup` slash command (with autocomplete!) or:
 ```
 >writeup-delete cat:crypto title:baby-rsa
 ```

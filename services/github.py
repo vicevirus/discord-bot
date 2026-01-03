@@ -173,3 +173,32 @@ def delete_writeup(ctf, category, challenge_name):
     else:
         print(f"Failed to delete file {writeup_path}: {response.status_code} - {response.text}")
         return "error"
+
+
+def list_writeups(ctf):
+    """
+    List all writeups for a CTF.
+    Returns list of writeup filenames (e.g., ['crypto-baby-rsa.md', 'web-sqli.md'])
+    """
+    headers = {
+        "Authorization": f"token {GITHUB_PAT}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    current_year = str(datetime.now().year)
+    ctf_path = safe_join(PARENT_FOLDER, current_year, ctf)
+    
+    response = requests.get(f"{GITHUB_API_URL}/{ctf_path}", headers=headers)
+    if response.status_code != 200:
+        return []
+    
+    files = response.json()
+    if not isinstance(files, list):
+        return []
+    
+    # Filter for .md files (excluding .gitkeep and other files)
+    writeups = [
+        f["name"] for f in files 
+        if f["type"] == "file" and f["name"].endswith(".md")
+    ]
+    
+    return sorted(writeups)

@@ -16,6 +16,8 @@ from handlers.writeup import (
     handle_quick_writeup,
     handle_batch_writeup,
     handle_writeup_delete,
+    slash_delete_writeup,
+    writeup_autocomplete,
 )
 
 from handlers.anonymous import (
@@ -59,6 +61,8 @@ __all__ = [
     'handle_quick_writeup',
     'handle_batch_writeup',
     'handle_writeup_delete',
+    'slash_delete_writeup',
+    'writeup_autocomplete',
     # Anonymous
     'handle_anonymous_question',
     # Help

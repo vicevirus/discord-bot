@@ -14,6 +14,7 @@ from services.github import (
     upload_binary_to_github,
     get_writeup_author,
     delete_writeup,
+    list_writeups,
 )
 
 
@@ -396,3 +397,202 @@ async def handle_writeup_delete(message):
         await message.channel.send(f"❌ Writeup not found: `{category_normalized}-{challenge_normalized}.md`")
     else:
         await message.channel.send("❌ Failed to delete writeup.")
+
+
+# =============================================================================
+# SLASH COMMAND: DELETE WRITEUP
+# =============================================================================
+
+class DeleteWriteupConfirmView(discord.ui.View):
+    """Confirmation view for writeup deletion with nice buttons."""
+    
+    def __init__(self, ctf: str, category: str, challenge: str, author: str):
+        super().__init__(timeout=60)  # 60 second timeout
+        self.ctf = ctf
+        self.category = category
+        self.challenge = challenge
+        self.author = author
+        self.confirmed = False
+    
+    @discord.ui.button(label="🗑️ Yes, Delete", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Confirm deletion."""
+        self.confirmed = True
+        
+        # Disable all buttons
+        for item in self.children:
+            item.disabled = True
+        
+        # Delete from GitHub
+        result = delete_writeup(self.ctf, self.category, self.challenge)
+        
+        if result == "deleted":
+            embed = discord.Embed(
+                title="✅ Writeup Deleted",
+                description=f"Successfully deleted `{self.category}-{self.challenge}.md`",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="CTF", value=self.ctf, inline=True)
+            embed.add_field(name="Author", value=self.author, inline=True)
+            embed.set_footer(text=f"Deleted by {interaction.user.display_name}")
+        else:
+            embed = discord.Embed(
+                title="❌ Deletion Failed",
+                description="Something went wrong while deleting the writeup.",
+                color=discord.Color.red()
+            )
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+    
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Cancel deletion."""
+        # Disable all buttons
+        for item in self.children:
+            item.disabled = True
+        
+        embed = discord.Embed(
+            title="🚫 Cancelled",
+            description="Writeup deletion cancelled.",
+            color=discord.Color.greyple()
+        )
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+    
+    async def on_timeout(self):
+        """Handle timeout - disable buttons."""
+        for item in self.children:
+            item.disabled = True
+
+
+async def slash_delete_writeup(interaction: discord.Interaction, writeup: str):
+    """
+    Slash command handler for /delwriteup.
+    Deletes a writeup from the current CTF (author/admin only).
+    """
+    # Check if in CTF channel
+    if not is_ctf_channel(interaction.channel):
+        await interaction.response.send_message(
+            "❌ This command can only be used in a CTF channel!",
+            ephemeral=True
+        )
+        return
+    
+    ctf = get_ctf_name(interaction.channel)
+    
+    # Handle truncated names - find the actual file by prefix match
+    actual_writeup = writeup
+    if len(writeup) >= 97:  # Might be truncated
+        all_writeups = list_writeups(ctf)
+        for w in all_writeups:
+            base_name = w[:-3] if w.endswith('.md') else w
+            if base_name.startswith(writeup):
+                actual_writeup = base_name
+                break
+    
+    # Parse writeup selection (format: "category-challenge")
+    if "-" not in actual_writeup:
+        await interaction.response.send_message(
+            "❌ Invalid writeup format. Please select from the autocomplete list.",
+            ephemeral=True
+        )
+        return
+    
+    # Split only on first dash to handle challenge names with dashes
+    parts = actual_writeup.split("-", 1)
+    if len(parts) != 2:
+        await interaction.response.send_message(
+            "❌ Invalid writeup format.",
+            ephemeral=True
+        )
+        return
+    
+    category = parts[0].strip()
+    challenge = parts[1].replace(".md", "").strip()
+    
+    # Get writeup author
+    author = get_writeup_author(ctf, category, challenge)
+    
+    if author is None:
+        embed = discord.Embed(
+            title="❌ Writeup Not Found",
+            description=f"Could not find `{category}-{challenge}.md` in **{ctf}**",
+            color=discord.Color.red()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    # Check permissions: author or admin
+    is_admin = interaction.user.guild_permissions.administrator
+    is_author = author.lower() == interaction.user.name.lower()
+    
+    if not is_admin and not is_author:
+        embed = discord.Embed(
+            title="🔒 Permission Denied",
+            description="You can only delete your own writeups!",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="Writeup Author", value=f"`{author}`", inline=True)
+        embed.add_field(name="Your Username", value=f"`{interaction.user.name}`", inline=True)
+        embed.set_footer(text="Admins can delete any writeup.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    # Show confirmation dialog with embed
+    embed = discord.Embed(
+        title="⚠️ Confirm Deletion",
+        description="Are you sure you want to delete this writeup?\n**This action cannot be undone!**",
+        color=discord.Color.yellow()
+    )
+    embed.add_field(name="📁 CTF", value=f"`{ctf}`", inline=True)
+    embed.add_field(name="📂 Category", value=f"`{category}`", inline=True)
+    embed.add_field(name="📝 Challenge", value=f"`{challenge}`", inline=True)
+    embed.add_field(name="✍️ Author", value=f"`{author}`", inline=True)
+    embed.set_footer(text="This confirmation will expire in 60 seconds.")
+    
+    view = DeleteWriteupConfirmView(ctf, category, challenge, author)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+async def writeup_autocomplete(interaction: discord.Interaction, current: str) -> list:
+    """
+    Autocomplete for writeup names.
+    Returns list of writeups for the current CTF.
+    """
+    from discord import app_commands
+    
+    if not is_ctf_channel(interaction.channel):
+        return []
+    
+    ctf = get_ctf_name(interaction.channel)
+    writeups = list_writeups(ctf)
+    
+    if not writeups:
+        return []
+    
+    # Filter by current input
+    filtered = [
+        w for w in writeups 
+        if current.lower() in w.lower()
+    ][:25]  # Discord limits to 25 choices
+    
+    # Discord limits name/value to 100 chars
+    # Strip .md and truncate if needed, handler will do prefix match
+    choices = []
+    for w in filtered:
+        # Remove .md extension for display
+        base_name = w[:-3] if w.endswith('.md') else w
+        
+        if len(base_name) <= 100:
+            display = base_name
+            value = base_name
+        else:
+            # Truncate for display, keep first 100 chars for value (prefix match)
+            display = base_name[:97] + "..."
+            value = base_name[:100]
+        
+        choices.append(app_commands.Choice(name=display, value=value))
+    
+    return choices
