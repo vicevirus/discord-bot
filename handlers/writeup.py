@@ -285,7 +285,8 @@ async def handle_quick_writeup(message):
     other_attachments = []
     
     for attachment in message.attachments:
-        if attachment.filename == 'message.txt' and not message.content.strip():
+        # Discord auto-converts long messages to message.txt - always read it
+        if attachment.filename == 'message.txt':
             message_txt_attachment = attachment
             from_message_txt = True
         else:
