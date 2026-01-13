@@ -308,19 +308,32 @@ async def handle_quick_writeup(message):
     
     # Validate command format
     if not first_line.strip().startswith('>writeup '):
+        # Silent return - this might be a batch writeup or unrelated message
+        # But if it has message.txt, user probably expected quick writeup
+        if from_message_txt:
+            await message.channel.send(
+                "❌ First line of message.txt must start with `>writeup cat:<category> title:<name>`\n"
+                "Don't mix with the `---` batch format."
+            )
         return
     
-    # Parse cat: and title: from first line
+    # Parse cat: and title: from first line using regex to handle spaces in title
+    import re
     category = None
     challenge_name = None
     
-    parts = first_line.split()
-    for part in parts[1:]:  # Skip '>writeup'
-        part_lower = part.lower()
-        if part_lower.startswith('cat:'):
-            category = part[4:].strip()
-        elif part_lower.startswith('title:'):
-            challenge_name = part[6:].strip()
+    # Match cat:something (no spaces in category)
+    cat_match = re.search(r'cat:(\S+)', first_line, re.IGNORECASE)
+    if cat_match:
+        category = cat_match.group(1).strip()
+    
+    # Match title:something (can have spaces - takes everything after title: until end of line)
+    title_match = re.search(r'title:(.+?)(?:\s+cat:|\s*$)', first_line, re.IGNORECASE)
+    if not title_match:
+        # Try alternative: title is everything after "title:" to end of line
+        title_match = re.search(r'title:(.+)$', first_line, re.IGNORECASE)
+    if title_match:
+        challenge_name = title_match.group(1).strip()
     
     if not category or not challenge_name:
         await message.channel.send(
@@ -339,6 +352,36 @@ async def handle_quick_writeup(message):
     
     # Content is everything after the first line
     content = '\n'.join(lines[1:]).strip() if len(lines) > 1 else ""
+    
+    # Strip out any --- metadata block if present (user mixed formats)
+    # We already have category/title from the command, so skip the --- block
+    if content.startswith('---'):
+        content_lines = content.split('\n')
+        # Find the closing --- or empty line after metadata
+        in_metadata = True
+        content_start = 0
+        for i, line in enumerate(content_lines[1:], 1):  # Skip first ---
+            stripped = line.strip().lower()
+            # If we hit another --- or empty line after seeing metadata, content starts after
+            if stripped == '---' or stripped == '':
+                content_start = i + 1
+                in_metadata = False
+                break
+            # Skip metadata lines like "Category:", "Challenge Name:", etc.
+            if any(stripped.startswith(p) for p in ['category:', 'challenge', 'chall:', 'name:']):
+                continue
+            # If it's not metadata, content starts here
+            else:
+                content_start = i
+                break
+        
+        if content_start < len(content_lines):
+            content = '\n'.join(content_lines[content_start:]).strip()
+            # Remove trailing --- if present
+            if content.endswith('\n---'):
+                content = content[:-4].strip()
+            elif content.endswith('---'):
+                content = content[:-3].strip()
     
     if not content and not other_attachments:
         await message.channel.send("❌ No content provided. Add your writeup after the command or attach files.")
