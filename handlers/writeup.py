@@ -297,7 +297,14 @@ async def handle_quick_writeup(message):
         async with aiohttp.ClientSession() as session:
             async with session.get(message_txt_attachment.url) as resp:
                 if resp.status == 200:
-                    full_text = await resp.text()
+                    message_txt_content = await resp.text()
+                    # If message.content has the command and message.txt has the body,
+                    # combine them. Otherwise just use message.txt
+                    if message.content.strip().startswith('>writeup '):
+                        # Append message.txt content after message.content
+                        full_text = message.content.strip() + '\n' + message_txt_content
+                    else:
+                        full_text = message_txt_content
     
     if not full_text.strip():
         await message.channel.send("❌ No content found.")
