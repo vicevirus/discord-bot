@@ -17,7 +17,7 @@ HELP_MESSAGE = """**Bot Commands:**
     Move the current CTF channel to the archive category.
 
 >ctf upcoming
-    List upcoming CTF events (next 5). See ctftime.org for more.
+    List upcoming CTF events (next 10). See ctftime.org for more.
 
 # Writeups
 >writeup cat:<category> title:<challenge-name>

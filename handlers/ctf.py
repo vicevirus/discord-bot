@@ -86,10 +86,10 @@ async def fetch_event_details(event_id):
 
 
 async def fetch_upcoming_events():
-    """Fetch upcoming CTF events from CTFtime (next 2 weeks, limit 5)."""
+    """Fetch upcoming CTF events from CTFtime (next 4 weeks, limit 10)."""
     start = int(datetime.now().timestamp())
-    end = int((datetime.now() + timedelta(weeks=2)).timestamp())
-    url = f'https://ctftime.org/api/v1/events/?limit=5&start={start}&finish={end}'
+    end = int((datetime.now() + timedelta(weeks=4)).timestamp())
+    url = f'https://ctftime.org/api/v1/events/?limit=10&start={start}&finish={end}'
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=CTFTIME_HEADERS) as response:
             return await response.json() if response.status == 200 else None

@@ -310,10 +310,7 @@ async def on_message(message):
     # =================================
     # QUICK WRITEUP
     # =================================
-    elif message.content.startswith('>writeup ') or (
-        not message.content.strip() and 
-        any(a.filename == 'message.txt' for a in message.attachments)
-    ):
+    elif message.content.startswith('>writeup '):
         try:
             await handle_quick_writeup(message)
         except Exception as e:
