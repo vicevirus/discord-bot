@@ -37,6 +37,7 @@ _summarizer = Agent(
         "Summarize the conversation concisely. Keep all technical details, CTF challenge names, "
         "flags, code, and decisions. Skip small talk. No preamble."
     ),
+    retries=2,
 )
 
 
@@ -44,12 +45,20 @@ async def _summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMes
     if len(messages) <= AGENT_SUMMARIZE_AFTER:
         return messages
     old, recent = messages[:-AGENT_KEEP_RECENT], messages[-AGENT_KEEP_RECENT:]
-    summary = await _summarizer.run("Summarize the conversation above.", message_history=old)
-    return summary.new_messages() + recent
+    try:
+        summary = await asyncio.wait_for(
+            _summarizer.run("Summarize the conversation above.", message_history=old),
+            timeout=20,
+        )
+        return summary.new_messages() + recent
+    except Exception:
+        # If summarization fails, just trim to recent messages to avoid bloat
+        return recent
 
 
 agent = Agent(
     _model(),
+    retries=2,
     system_prompt=(
         "You are Kuro. Just Kuro. "
         "You talk like a real person — lowercase, short sentences, no flourish. "
@@ -73,7 +82,7 @@ agent = Agent(
 def web_search(query: str) -> str:
     """Search the web using DuckDuckGo. Use this for current events, CTF writeups, CVEs, tools, or anything you're unsure about."""
     try:
-        with DDGS() as ddgs:
+        with DDGS(timeout=10) as ddgs:
             results = list(ddgs.text(query, max_results=5))
         if not results:
             return "No results found."
