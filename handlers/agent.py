@@ -95,8 +95,9 @@ def web_search(query: str) -> str:
 
 
 @agent.tool_plain
-def fetch_page(url: str) -> str:
-    """Fetch and read the content of a webpage. Use after web_search if you need full page details like a writeup or CVE."""
+def fetch_page(url: str, start: int = 0) -> str:
+    """Fetch and read the content of a webpage. Use after web_search for full writeup/CVE details.
+    If the content is truncated, call again with start=8000 to get the next chunk, and so on."""
     try:
         with httpx.Client(headers=_BROWSER_HEADERS, follow_redirects=True, timeout=15) as client:
             resp = client.get(url)
@@ -105,10 +106,12 @@ def fetch_page(url: str) -> str:
         for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
             tag.decompose()
         text = soup.get_text(separator="\n", strip=True)
-        # Trim to avoid blowing context window
-        if len(text) > 4000:
-            text = text[:4000] + "\n...[truncated]"
-        return text
+        chunk = text[start:start + 8000]
+        if not chunk:
+            return "No more content at this offset."
+        if start + 8000 < len(text):
+            chunk += f"\n...[truncated — call fetch_page with start={start + 8000} for more]"
+        return chunk
     except Exception as e:
         return f"Failed to fetch page: {e}"
 
