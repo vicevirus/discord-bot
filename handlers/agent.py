@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import date
+from datetime import datetime, timezone, timedelta
 
 import asyncio
 import httpx
@@ -82,7 +82,8 @@ agent = Agent(
 
 @agent.system_prompt
 def _current_date() -> str:
-    return f"Today's date is {date.today().strftime('%B %d, %Y')}."
+    my_time = datetime.now(timezone(timedelta(hours=8)))
+    return f"Current date and time (Malaysia, UTC+8): {my_time.strftime('%B %d, %Y %H:%M')}."
 
 
 @agent.tool_plain
