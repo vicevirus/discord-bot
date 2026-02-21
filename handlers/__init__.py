@@ -50,6 +50,8 @@ from handlers.challenge import (
     auto_track_worker,
 )
 
+from handlers.agent import handle_agent_message
+
 __all__ = [
     # CTF
     'handle_ctf_create',
@@ -89,4 +91,6 @@ __all__ = [
     'show_status',
     'delete_challenge',
     'auto_track_worker',
+    # Agent (Kuro)
+    'handle_agent_message',
 ]

@@ -47,6 +47,8 @@ from handlers import (
     handle_chall_working,
     handle_chall_unsolved,
     handle_chall_status,
+    # Agent (Kuro)
+    handle_agent_message,
 )
 
 
