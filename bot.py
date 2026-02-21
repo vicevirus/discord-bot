@@ -282,10 +282,6 @@ async def on_message(message):
         # Any other DM — talk to Kuro
         else:
             user_input = message.content.strip()
-            if user_input.lower() in ('clear', 'reset', 'forget'):
-                clear_channel_history(message.channel.id)
-                await message.channel.send('🧹 Cleared.')
-                return
             if user_input:
                 async with message.channel.typing():
                     try:
