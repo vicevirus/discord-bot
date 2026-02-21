@@ -4,3 +4,6 @@ Pillow
 aiohttp
 requests
 dotenv
+pydantic-ai-slim[openrouter]
+pytest
+pytest-asyncio
