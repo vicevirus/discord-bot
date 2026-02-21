@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
+import re
 
 import asyncio
 import httpx
@@ -124,6 +125,41 @@ def fetch_page(url: str, start: int = 0) -> str:
         return f"Failed to fetch page: {e}"
 
 
+def _strip_tables(text: str) -> str:
+    """Convert markdown tables to bullet lists so Discord renders them properly."""
+    lines = text.split("\n")
+    result = []
+    headers = []
+    in_table = False
+
+    for line in lines:
+        stripped = line.strip()
+        # separator row (e.g. |---|---|)
+        if re.match(r"^\|[-| :]+\|$", stripped):
+            in_table = True
+            continue
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [c.strip() for c in stripped[1:-1].split("|")]
+            if not in_table and not headers:
+                # first row = headers
+                headers = cells
+            else:
+                # data row — emit as bullet
+                if headers and len(cells) == len(headers):
+                    parts = [f"**{h}:** {v}" for h, v in zip(headers, cells) if v]
+                else:
+                    parts = [c for c in cells if c]
+                result.append("- " + ", ".join(parts))
+            continue
+        # non-table line resets state
+        if in_table or headers:
+            in_table = False
+            headers = []
+        result.append(line)
+
+    return "\n".join(result)
+
+
 async def handle_agent_message(channel_id: int, user_message: str) -> str:
     try:
         result = await asyncio.wait_for(
@@ -133,7 +169,7 @@ async def handle_agent_message(channel_id: int, user_message: str) -> str:
     except asyncio.TimeoutError:
         return "took too long, try again"
     _history[channel_id].extend(result.new_messages())
-    return result.output
+    return _strip_tables(result.output)
 
 
 def clear_channel_history(channel_id: int) -> None:
