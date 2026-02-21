@@ -1,5 +1,6 @@
 from collections import defaultdict
 
+import asyncio
 import httpx
 from bs4 import BeautifulSoup
 from ddgs import DDGS
@@ -104,7 +105,13 @@ def fetch_page(url: str) -> str:
 
 
 async def handle_agent_message(channel_id: int, user_message: str) -> str:
-    result = await agent.run(user_message, message_history=_history[channel_id])
+    try:
+        result = await asyncio.wait_for(
+            agent.run(user_message, message_history=_history[channel_id]),
+            timeout=45,
+        )
+    except asyncio.TimeoutError:
+        return "took too long, try again"
     _history[channel_id].extend(result.new_messages())
     return result.output
 
