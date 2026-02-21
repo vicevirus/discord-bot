@@ -5,5 +5,8 @@ aiohttp
 requests
 dotenv
 pydantic-ai-slim[openrouter]
+ddgs
+httpx
+beautifulsoup4
 pytest
 pytest-asyncio
