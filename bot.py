@@ -254,6 +254,28 @@ async def on_message(message):
         await auto_track_worker(message)
     
     # =================================
+    # KURO @MENTION IN CHANNELS
+    # =================================
+    if (
+        not isinstance(message.channel, discord.DMChannel)
+        and not message.author.bot
+        and bot.user in message.mentions
+    ):
+        user_input = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
+        if user_input:
+            async with message.channel.typing():
+                try:
+                    reply = await handle_agent_message(message.channel.id, user_input)
+                    if len(reply) > 1900:
+                        for i in range(0, len(reply), 1900):
+                            await message.channel.send(reply[i:i+1900])
+                    else:
+                        await message.channel.send(reply)
+                except Exception as e:
+                    await message.channel.send(f'Agent error: {e}')
+        return
+
+    # =================================
     # DM COMMANDS
     # =================================
     if isinstance(message.channel, discord.DMChannel) and message.author != bot.user:
