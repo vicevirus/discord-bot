@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import date
 
 import asyncio
 import httpx
@@ -77,6 +78,11 @@ agent = Agent(
     ),
     history_processors=[_summarize_old_messages],
 )
+
+
+@agent.system_prompt
+def _current_date() -> str:
+    return f"Today's date is {date.today().strftime('%B %d, %Y')}."
 
 
 @agent.tool_plain
