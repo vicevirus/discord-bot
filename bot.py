@@ -278,7 +278,26 @@ async def on_message(message):
                 await send_writeup_help(message.channel)
             else:
                 await send_help_message(message.channel)
-    
+
+        # Any other DM — talk to Kuro
+        else:
+            user_input = message.content.strip()
+            if user_input.lower() in ('clear', 'reset', 'forget'):
+                clear_channel_history(message.channel.id)
+                await message.channel.send('🧹 Cleared.')
+                return
+            if user_input:
+                async with message.channel.typing():
+                    try:
+                        reply = await handle_agent_message(message.channel.id, user_input)
+                        if len(reply) > 1900:
+                            for i in range(0, len(reply), 1900):
+                                await message.channel.send(reply[i:i+1900])
+                        else:
+                            await message.channel.send(reply)
+                    except Exception as e:
+                        await message.channel.send(f'Agent error: {e}')
+
     # =================================
     # CTF CREATE
     # =================================
