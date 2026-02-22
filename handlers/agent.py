@@ -58,6 +58,7 @@ def _model():
 
 
 _MODEL_SETTINGS = AnthropicModelSettings(
+    max_tokens=4096,
     extra_headers={"User-Agent": "claude-cli/2.1.50 (external, cli)"}
 )
 
@@ -112,6 +113,9 @@ agent = Agent(
     retries=2,
     model_settings=_MODEL_SETTINGS,
     system_prompt=(
+        "CRITICAL — TOOL DISCIPLINE: when you need to call any tool, output ZERO text before it. "
+        "No 'let me check', no 'let me search', no 'alright', no 'great', nothing. Call the tool immediately and silently. "
+        "Write text ONLY after ALL tools are done and you have results in hand. "
         "You are Kuro. Just Kuro. "
         "You talk like a real person — lowercase, short sentences, no flourish. "
         "You don't announce who you are or what you do unless asked directly. "
@@ -122,9 +126,6 @@ agent = Agent(
         "Keep it short. Don't over-explain. Don't use formal words or phrases like 'certainly', 'sparring partner', 'I'm here for you'. "
         "Never say you're an AI. Never say you're part of any team unprompted. "
         "Respond like you're texting a friend. "
-        "ABSOLUTELY NO PREAMBLE before tool calls. If you need to search or fetch anything, call the tool IMMEDIATELY with zero text. "
-        "Do NOT say 'let me research', 'alright', 'great question', 'I'll look into that', or ANYTHING before a tool call. "
-        "Only write text AFTER you have all tool results in hand. "
         "If a question needs current or external info you don't know for sure, use web_search — don't guess. "
         "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
         "This is READ-ONLY. Never attempt to create, modify, or delete CTF channels or challenges. "
@@ -132,9 +133,6 @@ agent = Agent(
         "PREFERRED: use web_search to find a meme page, then fetch_image with a direct image URL from the results (.jpg/.png/.gif/.webp). "
         "FALLBACK: if you have no URL, use image_search(query) — but if it says DDG is unavailable, chain web_search → fetch_image instead. "
         "Never save images to disk — all tools work entirely in memory. "
-        "TOOL DISCIPLINE — critical: when you call any tool, output ZERO text in that same turn. "
-        "No 'let me check', no 'one sec', nothing. Just the tool call, silently. "
-        "Write your response ONLY after all tools are done and you have the results. "
         "FORMATTING RULES for Discord: never use markdown tables (pipes | don't render). "
         "For structured info, use bullet points or numbered lists instead. "
         "Bold (**text**) and inline code (`code`) are fine. Keep formatting minimal. "
@@ -500,18 +498,19 @@ async def stream_agent_message(channel_id: int, user_message: str):
     token = _status_q.set(queue)
 
     async def _run_once(history: list):
+        text_chunks = 0
         async with agent.run_stream(user_message, message_history=history) as result:
             got_text = False
             last_chunk = ''
             async for delta in result.stream_text(delta=True):
                 got_text = True
                 last_chunk = delta
+                text_chunks += 1
                 await queue.put(('text', delta))
+            print(f'[kuro] stream done: got_text={got_text} chunks={text_chunks} last={repr(last_chunk[-30:]) if last_chunk else ""}', flush=True)
             if not got_text:
-                # Model called tools but produced no text — send something so the user isn't left with ▍
                 await queue.put(('text', '...'))
             elif last_chunk and last_chunk.rstrip().endswith('---'):
-                # Stream cut off mid-response (Bonsai token limit)
                 await queue.put(('text', '\n_[response cut off — try asking in smaller parts]_'))
             return result.new_messages()
 
