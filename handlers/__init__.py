@@ -50,7 +50,7 @@ from handlers.challenge import (
     auto_track_worker,
 )
 
-from handlers.agent import handle_agent_message
+from handlers.agent import handle_agent_message, stream_agent_message, strip_tables
 
 __all__ = [
     # CTF
@@ -93,4 +93,6 @@ __all__ = [
     'auto_track_worker',
     # Agent (Kuro)
     'handle_agent_message',
+    'stream_agent_message',
+    'strip_tables',
 ]

@@ -49,6 +49,8 @@ from handlers import (
     handle_chall_status,
     # Agent (Kuro)
     handle_agent_message,
+    stream_agent_message,
+    strip_tables,
 )
 
 
@@ -263,16 +265,33 @@ async def on_message(message):
     ):
         user_input = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
         if user_input:
-            async with message.channel.typing():
-                try:
-                    reply = await handle_agent_message(message.channel.id, user_input)
-                    if len(reply) > 1900:
-                        for i in range(0, len(reply), 1900):
-                            await message.channel.send(reply[i:i+1900])
-                    else:
-                        await message.channel.send(reply)
-                except Exception as e:
-                    await message.channel.send(f'Agent error: {e}')
+            sent = await message.channel.send('▍')
+            accumulated = ''
+            last_edit = asyncio.get_event_loop().time()
+            try:
+                async for delta in stream_agent_message(message.channel.id, user_input):
+                    accumulated += delta
+                    now = asyncio.get_event_loop().time()
+                    if now - last_edit >= 1.0 and accumulated.strip():
+                        preview = strip_tables(accumulated)
+                        display = preview[:1897] + '...' if len(preview) > 1900 else preview
+                        try:
+                            await sent.edit(content=display + ' ▍')
+                        except Exception:
+                            pass
+                        last_edit = now
+                final = strip_tables(accumulated)
+                if not final.strip():
+                    await sent.edit(content='...')
+                elif len(final) <= 1900:
+                    await sent.edit(content=final)
+                else:
+                    chunks = [final[i:i+1900] for i in range(0, len(final), 1900)]
+                    await sent.edit(content=chunks[0])
+                    for chunk in chunks[1:]:
+                        await message.channel.send(chunk)
+            except Exception as e:
+                await sent.edit(content=f'Agent error: {e}')
         return
 
     # =================================
@@ -307,16 +326,33 @@ async def on_message(message):
         else:
             user_input = message.content.strip()
             if user_input:
-                async with message.channel.typing():
-                    try:
-                        reply = await handle_agent_message(message.channel.id, user_input)
-                        if len(reply) > 1900:
-                            for i in range(0, len(reply), 1900):
-                                await message.channel.send(reply[i:i+1900])
-                        else:
-                            await message.channel.send(reply)
-                    except Exception as e:
-                        await message.channel.send(f'Agent error: {e}')
+                sent = await message.channel.send('▍')
+                accumulated = ''
+                last_edit = asyncio.get_event_loop().time()
+                try:
+                    async for delta in stream_agent_message(message.channel.id, user_input):
+                        accumulated += delta
+                        now = asyncio.get_event_loop().time()
+                        if now - last_edit >= 1.0 and accumulated.strip():
+                            preview = strip_tables(accumulated)
+                            display = preview[:1897] + '...' if len(preview) > 1900 else preview
+                            try:
+                                await sent.edit(content=display + ' ▍')
+                            except Exception:
+                                pass
+                            last_edit = now
+                    final = strip_tables(accumulated)
+                    if not final.strip():
+                        await sent.edit(content='...')
+                    elif len(final) <= 1900:
+                        await sent.edit(content=final)
+                    else:
+                        chunks = [final[i:i+1900] for i in range(0, len(final), 1900)]
+                        await sent.edit(content=chunks[0])
+                        for chunk in chunks[1:]:
+                            await message.channel.send(chunk)
+                except Exception as e:
+                    await sent.edit(content=f'Agent error: {e}')
 
     # =================================
     # CTF CREATE

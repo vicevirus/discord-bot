@@ -166,7 +166,7 @@ def fetch_page(url: str, start: int = 0) -> str:
         return f"Failed to fetch page: {e}"
 
 
-def _strip_tables(text: str) -> str:
+def strip_tables(text: str) -> str:
     """Convert markdown tables to bullet lists so Discord renders them properly."""
     lines = text.split("\n")
     result = []
@@ -201,6 +201,19 @@ def _strip_tables(text: str) -> str:
     return "\n".join(result)
 
 
+async def stream_agent_message(channel_id: int, user_message: str):
+    """Async generator that yields text deltas. Saves history when exhausted."""
+    try:
+        async with asyncio.timeout(45):
+            async with agent.run_stream(user_message, message_history=_history[channel_id]) as result:
+                async for delta in result.stream_text(delta=True):
+                    yield delta
+                new_msgs = result.new_messages()
+            _history[channel_id].extend(new_msgs)
+    except asyncio.TimeoutError:
+        yield "\n\ntook too long, try again"
+
+
 async def handle_agent_message(channel_id: int, user_message: str) -> str:
     try:
         async with asyncio.timeout(45):
@@ -208,7 +221,7 @@ async def handle_agent_message(channel_id: int, user_message: str) -> str:
                 output = await result.get_output()
                 new_msgs = result.new_messages()
             _history[channel_id].extend(new_msgs)
-            return _strip_tables(output)
+            return strip_tables(output)
     except asyncio.TimeoutError:
         return "took too long, try again"
 
