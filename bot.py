@@ -265,11 +265,17 @@ async def on_message(message):
     ):
         user_input = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
         if user_input:
-            sent = await message.channel.send('▍')
+            mention = message.author.mention
+            sent = await message.channel.send(f'{mention} ▍')
             accumulated = ''
             current_status = ''
             loop = asyncio.get_event_loop()
             last_edit = loop.time()
+            # max content per edit: 2000 chars total; reserve ~30 for mention + newline
+            _LIMIT = 1960
+
+            def _fmt(body: str, suffix: str = '') -> str:
+                return f'{mention}\n{body}{suffix}'
 
             try:
                 async with message.channel.typing():
@@ -277,38 +283,37 @@ async def on_message(message):
                         kind, data = event
                         if kind == 'status':
                             current_status = data
-                            # Show status immediately regardless of throttle
                             base = strip_tables(accumulated)
-                            preview = (base[:1820] + '...') if len(base) > 1820 else base
+                            preview = (base[:_LIMIT - 60] + '...') if len(base) > _LIMIT - 60 else base
                             sep = '\n\n' if preview else ''
                             try:
-                                await sent.edit(content=f'{preview}{sep}_{current_status}_')
+                                await sent.edit(content=_fmt(f'{preview}{sep}_{current_status}_'))
                             except Exception:
                                 pass
                         elif kind == 'text':
                             accumulated += data
-                            current_status = ''  # clear status once text starts flowing
+                            current_status = ''
                             now = loop.time()
                             if now - last_edit >= 1.0 and accumulated.strip():
                                 preview = strip_tables(accumulated)
-                                display = preview[:1897] + '...' if len(preview) > 1900 else preview
+                                display = (preview[:_LIMIT - 3] + '...') if len(preview) > _LIMIT else preview
                                 try:
-                                    await sent.edit(content=display + ' ▍')
+                                    await sent.edit(content=_fmt(display, ' ▍'))
                                 except Exception:
                                     pass
                                 last_edit = now
             except Exception as e:
-                await sent.edit(content=f'error: {e}')
+                await sent.edit(content=_fmt(f'error: {e}'))
                 return
 
             final = strip_tables(accumulated)
             if not final.strip():
-                await sent.edit(content='...')
-            elif len(final) <= 1900:
-                await sent.edit(content=final)
+                await sent.edit(content=_fmt('...'))
+            elif len(final) <= _LIMIT:
+                await sent.edit(content=_fmt(final))
             else:
-                chunks = [final[i:i+1900] for i in range(0, len(final), 1900)]
-                await sent.edit(content=chunks[0])
+                chunks = [final[i:i+_LIMIT] for i in range(0, len(final), _LIMIT)]
+                await sent.edit(content=_fmt(chunks[0]))
                 for chunk in chunks[1:]:
                     await message.channel.send(chunk)
         return
