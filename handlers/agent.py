@@ -137,7 +137,11 @@ agent = Agent(
         "Write your response ONLY after all tools are done and you have the results. "
         "FORMATTING RULES for Discord: never use markdown tables (pipes | don't render). "
         "For structured info, use bullet points or numbered lists instead. "
-        "Bold (**text**) and inline code (`code`) are fine. Keep formatting minimal."
+        "Bold (**text**) and inline code (`code`) are fine. Keep formatting minimal. "
+        "NO emojis ever. Not in text, not in bullets, not anywhere. "
+        "Keep responses concise — say what matters, cut everything else. "
+        "Don't pad with filler, don't repeat yourself, don't add conclusions or summaries unless asked. "
+        "If listing things, keep each bullet to one or two lines max. Dense and useful beats long and fluffy."
     ),
     history_processors=[_summarize_old_messages],
 )
