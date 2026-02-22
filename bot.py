@@ -10,6 +10,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
+import io
 import httpx
 
 from config import (
@@ -337,6 +338,12 @@ async def on_message(message):
                                 await sent.edit(content=_fmt(f'{preview}{sep}_{current_status}_'), suppress=True)
                             except Exception:
                                 pass
+                        elif kind == 'image_file':
+                            try:
+                                img_data, img_fname = data
+                                await message.channel.send(file=discord.File(io.BytesIO(img_data), filename=img_fname))
+                            except Exception:
+                                pass
                         elif kind == 'text':
                             accumulated += data
                             current_status = ''
@@ -417,6 +424,12 @@ async def on_message(message):
                                 sep = '\n\n' if preview else ''
                                 try:
                                     await sent.edit(content=f'{preview}{sep}_{current_status}_', suppress=True)
+                                except Exception:
+                                    pass
+                            elif kind == 'image_file':
+                                try:
+                                    img_data, img_fname = data
+                                    await message.channel.send(file=discord.File(io.BytesIO(img_data), filename=img_fname))
                                 except Exception:
                                     pass
                             elif kind == 'text':

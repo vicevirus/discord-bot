@@ -125,6 +125,10 @@ agent = Agent(
         "If a question needs current or external info you don't know for sure, use web_search — don't guess. "
         "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
         "This is READ-ONLY. Never attempt to create, modify, or delete CTF channels or challenges. "
+        "When asked for a meme, image, gif, or anything visual: "
+        "if you already have or can find a direct image URL (from web_search results or fetch_page content), call fetch_image(url) — it uploads the image straight to chat from memory. "
+        "If you have no specific URL, use image_search(query) to find and display one via DuckDuckGo. "
+        "Never save images to disk — both tools work entirely in memory. "
         "TOOL DISCIPLINE — critical: when you call any tool, output ZERO text in that same turn. "
         "No 'let me check', no 'one sec', nothing. Just the tool call, silently. "
         "Write your response ONLY after all tools are done and you have the results. "
@@ -275,6 +279,87 @@ async def fetch_page(url: str, start: int = 0) -> str:
         return chunk
     except Exception as e:
         return f"Failed to fetch page: {e}"
+
+
+_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+_MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB
+
+
+async def _fetch_image_bytes(url: str) -> tuple | None:
+    """Fetch image bytes from a URL into memory. Returns (data, filename) or None."""
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True,
+                                  headers=_BROWSER_HEADERS) as client:
+        try:
+            resp = await client.get(url)
+            ct = resp.headers.get('content-type', '').split(';')[0].strip().lower()
+            if resp.status_code != 200 or not ct.startswith('image/'):
+                return None
+            data = resp.content
+            if len(data) > _MAX_IMAGE_BYTES:
+                return None
+            ext_map = {
+                'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif',
+                'image/webp': '.webp', 'image/bmp': '.bmp',
+            }
+            ext = ext_map.get(ct, '.jpg')
+            fname = url.rstrip('/').split('/')[-1].split('?')[0] or f'image{ext}'
+            if not any(fname.lower().endswith(e) for e in _IMAGE_EXTS):
+                fname = f'image{ext}'
+            return data, fname
+        except Exception:
+            return None
+
+
+@agent.tool_plain
+async def fetch_image(url: str) -> str:
+    """Fetch an image from a URL and display it directly in Discord chat.
+    Use this when you have a direct image URL (from web search results, meme sites, etc.).
+    The image is fetched into memory and uploaded — nothing is saved to disk."""
+    q = _status_q.get()
+    if q is not None:
+        label = url.split('//')[-1][:50]
+        q.put_nowait(('status', f'fetching image: `{label}`'))
+        await asyncio.sleep(0)
+    result = await _fetch_image_bytes(url)
+    if result is None:
+        return f"Could not fetch a valid image from: {url}"
+    data, fname = result
+    if q is not None:
+        q.put_nowait(('image_file', (data, fname)))
+        await asyncio.sleep(0)
+    return f"Displayed image ({fname}, {len(data)//1024}KB)"
+
+
+@agent.tool_plain
+async def image_search(query: str) -> str:
+    """Search for a meme or image using DuckDuckGo and display it in Discord.
+    Use this as a fallback when you don't have a specific image URL.
+    The image is fetched into memory and uploaded — nothing is saved to disk."""
+    q = _status_q.get()
+    if q is not None:
+        q.put_nowait(('status', f'searching image: *{query}*'))
+        await asyncio.sleep(0)
+    try:
+        results = await asyncio.to_thread(
+            lambda: list(DDGS(timeout=10).images(query, max_results=12))
+        )
+        if not results:
+            return "No images found."
+        for r in results:
+            url = r.get('image', '')
+            if not url or not url.startswith('http'):
+                continue
+            result = await _fetch_image_bytes(url)
+            if result is None:
+                continue
+            data, fname = result
+            if q is not None:
+                q.put_nowait(('image_file', (data, fname)))
+                await asyncio.sleep(0)
+            return f"Displayed image ({fname}, {len(data)//1024}KB)"
+        return "No valid images found."
+    except Exception as e:
+        return f"Image search failed: {e}"
 
 
 @agent.tool_plain
