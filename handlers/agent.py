@@ -490,12 +490,20 @@ async def stream_agent_message(channel_id: int, user_message: str):
     On a 400 provider error the channel history is trimmed and retried once
     automatically so the bot never gets permanently stuck after a bad turn.
     """
-    INACTIVITY_TIMEOUT = 60  # if nothing arrives for 60s, something is wrong
+    INACTIVITY_TIMEOUT = 120  # 120s between any queue events before giving up
 
     _SENTINEL = object()
     queue: asyncio.Queue = asyncio.Queue()
 
     token = _status_q.set(queue)
+
+    async def _heartbeat():
+        """Push a dot status every 15s so the user sees the bot is alive."""
+        dots = 0
+        while True:
+            await asyncio.sleep(15)
+            dots += 1
+            queue.put_nowait(('status', 'thinking' + '.' * (dots % 4 + 1)))
 
     async def _run_once(history: list):
         text_chunks = 0
@@ -547,6 +555,7 @@ async def stream_agent_message(channel_id: int, user_message: str):
             await queue.put(_SENTINEL)
 
     producer_task = asyncio.create_task(_producer())
+    heartbeat_task = asyncio.create_task(_heartbeat())
     try:
         while True:
             try:
@@ -562,6 +571,7 @@ async def stream_agent_message(channel_id: int, user_message: str):
             yield item  # ('text', str) or ('status', str)
     finally:
         _status_q.reset(token)
+        heartbeat_task.cancel()
         producer_task.cancel()
         try:
             await producer_task
