@@ -126,9 +126,9 @@ agent = Agent(
         "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
         "This is READ-ONLY. Never attempt to create, modify, or delete CTF channels or challenges. "
         "When asked for a meme, image, gif, or anything visual: "
-        "if you already have or can find a direct image URL (from web_search results or fetch_page content), call fetch_image(url) — it uploads the image straight to chat from memory. "
-        "If you have no specific URL, use image_search(query) to find and display one via DuckDuckGo. "
-        "Never save images to disk — both tools work entirely in memory. "
+        "PREFERRED: use web_search to find a meme page, then fetch_image with a direct image URL from the results (.jpg/.png/.gif/.webp). "
+        "FALLBACK: if you have no URL, use image_search(query) — but if it says DDG is unavailable, chain web_search → fetch_image instead. "
+        "Never save images to disk — all tools work entirely in memory. "
         "TOOL DISCIPLINE — critical: when you call any tool, output ZERO text in that same turn. "
         "No 'let me check', no 'one sec', nothing. Just the tool call, silently. "
         "Write your response ONLY after all tools are done and you have the results. "
@@ -330,21 +330,24 @@ async def fetch_image(url: str) -> str:
     return f"Displayed image ({fname}, {len(data)//1024}KB)"
 
 
+_IMG_URL_RE = re.compile(r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)(\?\S*)?', re.IGNORECASE)
+
+
 @agent.tool_plain
 async def image_search(query: str) -> str:
     """Search for a meme or image using DuckDuckGo and display it in Discord.
     Use this as a fallback when you don't have a specific image URL.
-    The image is fetched into memory and uploaded — nothing is saved to disk."""
+    The image is fetched into memory and uploaded — nothing is saved to disk.
+    If this fails, try web_search to find a page with images, then call fetch_image with the URL."""
     q = _status_q.get()
     if q is not None:
         q.put_nowait(('status', f'searching image: *{query}*'))
         await asyncio.sleep(0)
+    # --- Try DDG images API first ---
     try:
         results = await asyncio.to_thread(
             lambda: list(DDGS(timeout=10).images(query, max_results=12))
         )
-        if not results:
-            return "No images found."
         for r in results:
             url = r.get('image', '')
             if not url or not url.startswith('http'):
@@ -357,9 +360,36 @@ async def image_search(query: str) -> str:
                 q.put_nowait(('image_file', (data, fname)))
                 await asyncio.sleep(0)
             return f"Displayed image ({fname}, {len(data)//1024}KB)"
-        return "No valid images found."
-    except Exception as e:
-        return f"Image search failed: {e}"
+    except Exception:
+        pass  # fall through to text-search fallback
+    # --- Fallback: text search, extract direct image URLs from snippets ---
+    try:
+        text_results = await asyncio.to_thread(
+            lambda: list(DDGS(timeout=10).text(f'{query} meme site:imgur.com OR site:i.redd.it OR site:media.tenor.com', max_results=8))
+        )
+        candidate_urls = []
+        for r in text_results:
+            # Try the href itself if it looks like an image
+            href = r.get('href', '')
+            if _IMG_URL_RE.match(href):
+                candidate_urls.append(href)
+            # Also scan body text for image URLs
+            body = r.get('body', '')
+            candidate_urls.extend(_IMG_URL_RE.findall(body))
+        for url in candidate_urls:
+            if not isinstance(url, str):
+                continue
+            result = await _fetch_image_bytes(url)
+            if result is None:
+                continue
+            data, fname = result
+            if q is not None:
+                q.put_nowait(('image_file', (data, fname)))
+                await asyncio.sleep(0)
+            return f"Displayed image ({fname}, {len(data)//1024}KB)"
+    except Exception:
+        pass
+    return "DDG image search unavailable right now. Try calling web_search to find a page with images, then fetch_image with the direct image URL."
 
 
 @agent.tool_plain
