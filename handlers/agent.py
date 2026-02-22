@@ -507,30 +507,35 @@ async def stream_agent_message(channel_id: int, user_message: str):
 
     async def _run_once(history: list):
         text_chunks = 0
+        accumulated = []
         async with agent.run_stream(user_message, message_history=history) as result:
-            got_text = False
             last_chunk = ''
             async for delta in result.stream_text(delta=True):
-                got_text = True
                 last_chunk = delta
                 text_chunks += 1
+                accumulated.append(delta)
                 await queue.put(('text', delta))
-            print(f'[kuro] stream done: got_text={got_text} chunks={text_chunks} last={repr(last_chunk[-30:]) if last_chunk else ""}', flush=True)
-            if not got_text:
-                # stream_text yielded nothing (model only did tool calls then stopped streaming)
-                # fall back to the full buffered output
-                try:
-                    fallback = await result.get_output()
-                    if fallback and fallback.strip():
-                        print(f'[kuro] fallback get_output: {repr(fallback[:80])}', flush=True)
-                        await queue.put(('text', fallback))
-                    else:
-                        await queue.put(('text', '...'))
-                except Exception as fb_err:
-                    print(f'[kuro] fallback failed: {fb_err}', flush=True)
+
+            streamed = ''.join(accumulated)
+            print(f'[kuro] stream done: chunks={text_chunks} len={len(streamed)} last={repr(last_chunk[-30:]) if last_chunk else ""}', flush=True)
+
+            # Always check full output — model may have produced more after tool calls
+            # than what stream_text captured (preamble-then-silence issue)
+            try:
+                full = await result.get_output()
+                print(f'[kuro] get_output len={len(full)} streamed len={len(streamed)}', flush=True)
+                if full and len(full) > len(streamed):
+                    # There's more text that wasn't streamed — send the unseen part
+                    extra = full[len(streamed):]
+                    if extra.strip():
+                        await queue.put(('text', extra))
+                elif not streamed.strip():
+                    await queue.put(('text', full if full and full.strip() else '...'))
+            except Exception as fb_err:
+                print(f'[kuro] get_output failed: {fb_err}', flush=True)
+                if not streamed.strip():
                     await queue.put(('text', '...'))
-            elif last_chunk and last_chunk.rstrip().endswith('---'):
-                await queue.put(('text', '\n_[response cut off — try asking in smaller parts]_'))
+
             return result.new_messages()
 
     async def _producer():
