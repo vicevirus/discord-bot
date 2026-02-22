@@ -9,7 +9,16 @@ import anthropic
 import httpx
 from bs4 import BeautifulSoup
 from ddgs import DDGS
-from pydantic_ai import Agent, ModelMessage
+from pydantic_ai import (
+    Agent,
+    FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPartDelta,
+)
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -113,9 +122,13 @@ agent = Agent(
     retries=2,
     model_settings=_MODEL_SETTINGS,
     system_prompt=(
-        "CRITICAL — TOOL DISCIPLINE: when you need to call any tool, output ZERO text before it. "
-        "No 'let me check', no 'let me search', no 'alright', no 'great', nothing. Call the tool immediately and silently. "
-        "Write text ONLY after ALL tools are done and you have results in hand. "
+        "CRITICAL — TOOL DISCIPLINE (READ THIS FIRST): "
+        "Output ZERO text before ANY tool call — including between tool-call rounds. "
+        "No 'let me check', 'now let me search', 'alright', 'let me dig deeper', 'now let me look', nothing. "
+        "This applies EVERY time you call a tool, not just the first time. "
+        "Silently call tools until you have ALL the data you need, THEN write your answer. "
+        "Your FIRST text output must be the final answer itself — never a transition sentence. "
+        "Limit yourself to at most 5 web fetches per response to stay within budget. "
         "You are Kuro. Just Kuro. "
         "You talk like a real person — lowercase, short sentences, no flourish. "
         "You don't announce who you are or what you do unless asked directly. "
@@ -507,36 +520,38 @@ async def stream_agent_message(channel_id: int, user_message: str):
 
     async def _run_once(history: list):
         text_chunks = 0
-        accumulated = []
-        async with agent.run_stream(user_message, message_history=history) as result:
-            last_chunk = ''
-            async for delta in result.stream_text(delta=True):
-                last_chunk = delta
-                text_chunks += 1
-                accumulated.append(delta)
-                await queue.put(('text', delta))
+        async with agent.iter(user_message, message_history=history) as run:
+            async for node in run:
+                if Agent.is_model_request_node(node):
+                    # Stream events from the model request.
+                    # ANY text before FinalResultEvent is preamble (mid-round filler) — skip it.
+                    # Only stream text AFTER FinalResultEvent fires.
+                    async with node.stream(run.ctx) as request_stream:
+                        final_found = False
+                        async for event in request_stream:
+                            if isinstance(event, FinalResultEvent):
+                                final_found = True
+                                break
+                            # PartDeltaEvent/PartStartEvent before FinalResultEvent = preamble, drop it
+                        if final_found:
+                            async for delta in request_stream.stream_text(delta=True):
+                                text_chunks += 1
+                                await queue.put(('text', delta))
 
-            streamed = ''.join(accumulated)
-            print(f'[kuro] stream done: chunks={text_chunks} len={len(streamed)} last={repr(last_chunk[-30:]) if last_chunk else ""}', flush=True)
+                elif Agent.is_call_tools_node(node):
+                    # Must iterate handle_stream so tools actually execute.
+                    # Tool status updates are pushed by the tools themselves via _status_q.
+                    async with node.stream(run.ctx) as handle_stream:
+                        async for _ in handle_stream:
+                            pass
 
-            # Always check full output — model may have produced more after tool calls
-            # than what stream_text captured (preamble-then-silence issue)
-            try:
-                full = await result.get_output()
-                print(f'[kuro] get_output len={len(full)} streamed len={len(streamed)}', flush=True)
-                if full and len(full) > len(streamed):
-                    # There's more text that wasn't streamed — send the unseen part
-                    extra = full[len(streamed):]
-                    if extra.strip():
-                        await queue.put(('text', extra))
-                elif not streamed.strip():
-                    await queue.put(('text', full if full and full.strip() else '...'))
-            except Exception as fb_err:
-                print(f'[kuro] get_output failed: {fb_err}', flush=True)
-                if not streamed.strip():
-                    await queue.put(('text', '...'))
-
-            return result.new_messages()
+        full = run.result.output if run.result else ''
+        print(f'[kuro] iter done: text_chunks={text_chunks} output_len={len(full)}', flush=True)
+        if text_chunks == 0 and full and full.strip():
+            # iter finished but nothing was streamed (e.g. model only did tools, no FinalResultEvent text)
+            print(f'[kuro] fallback: pushing full output', flush=True)
+            await queue.put(('text', full))
+        return run.result.new_messages() if run.result else []
 
     async def _producer():
         try:
