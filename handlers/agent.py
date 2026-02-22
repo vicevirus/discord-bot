@@ -92,7 +92,8 @@ async def _summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMes
         async with asyncio.timeout(20):
             async with _summarizer.run_stream("Summarize the conversation above.", message_history=old) as result:
                 await result.get_output()
-            return result.new_messages() + recent
+                new_msgs = result.new_messages()
+            return new_msgs + recent
     except Exception:
         return recent
 
@@ -205,7 +206,8 @@ async def handle_agent_message(channel_id: int, user_message: str) -> str:
         async with asyncio.timeout(45):
             async with agent.run_stream(user_message, message_history=_history[channel_id]) as result:
                 output = await result.get_output()
-            _history[channel_id].extend(result.new_messages())
+                new_msgs = result.new_messages()
+            _history[channel_id].extend(new_msgs)
             return _strip_tables(output)
     except asyncio.TimeoutError:
         return "took too long, try again"
