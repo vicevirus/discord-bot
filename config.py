@@ -23,8 +23,8 @@ CTF_ANNOUNCE_CHANNEL_ID = 1251192205381472296
 # AI AGENT
 # =============================================================================
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-AGENT_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free"
+BONSAI_API_KEY = os.getenv("BONSAI_API_KEY")
+AGENT_MODEL = "claude-sonnet-4-20250514"
 AGENT_SUMMARIZE_AFTER = 20
 AGENT_KEEP_RECENT = 6
 

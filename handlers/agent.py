@@ -1,16 +1,60 @@
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
+import json
 import re
 
 import asyncio
+import anthropic
 import httpx
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from pydantic_ai import Agent, ModelMessage
-from pydantic_ai.models.openrouter import OpenRouterModel
-from pydantic_ai.providers.openrouter import OpenRouterProvider
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.providers.anthropic import AnthropicProvider
 
-from config import OPENROUTER_API_KEY, AGENT_MODEL, AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT
+from config import BONSAI_API_KEY, AGENT_MODEL, AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT
+
+BONSAI_MAGIC = "You are Claude Code, Anthropic's official CLI for Claude."
+
+
+class _BonsaiTransport(httpx.AsyncHTTPTransport):
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.method not in ("POST", b"POST") or b"/messages" not in request.url.raw_path:
+            return await super().handle_async_request(request)
+        body = json.loads(request.content)
+        sys = body.get("system", "")
+        extra = ([{"type": "text", "text": sys}] if isinstance(sys, str) and sys
+                 else sys if isinstance(sys, list) else [])
+        body["system"] = [{"type": "text", "text": BONSAI_MAGIC}] + extra
+        body.pop("tool_choice", None)
+        body["stream"] = True
+        raw = json.dumps(body).encode()
+        return await super().handle_async_request(httpx.Request(
+            method=request.method, url=request.url,
+            headers=[(k, v) for k, v in request.headers.raw if k.lower() != b"content-length"]
+                    + [(b"content-length", str(len(raw)).encode())],
+            content=raw,
+        ))
+
+
+def _make_provider():
+    return AnthropicProvider(anthropic_client=anthropic.AsyncAnthropic(
+        auth_token=BONSAI_API_KEY,
+        base_url="https://go.trybons.ai",
+        http_client=httpx.AsyncClient(transport=_BonsaiTransport()),
+    ))
+
+
+def _model():
+    return AnthropicModel(
+        AGENT_MODEL,
+        provider=_make_provider(),
+    )
+
+
+_MODEL_SETTINGS = AnthropicModelSettings(
+    extra_headers={"User-Agent": "claude-cli/2.1.50 (external, cli)"}
+)
 
 _BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -29,10 +73,6 @@ _BROWSER_HEADERS = {
 _history: dict[int, list] = defaultdict(list)
 
 
-def _model():
-    return OpenRouterModel(AGENT_MODEL, provider=OpenRouterProvider(api_key=OPENROUTER_API_KEY))
-
-
 _summarizer = Agent(
     _model(),
     instructions=(
@@ -40,6 +80,7 @@ _summarizer = Agent(
         "flags, code, and decisions. Skip small talk. No preamble."
     ),
     retries=2,
+    model_settings=_MODEL_SETTINGS,
 )
 
 
@@ -48,19 +89,18 @@ async def _summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMes
         return messages
     old, recent = messages[:-AGENT_KEEP_RECENT], messages[-AGENT_KEEP_RECENT:]
     try:
-        summary = await asyncio.wait_for(
-            _summarizer.run("Summarize the conversation above.", message_history=old),
-            timeout=20,
-        )
-        return summary.new_messages() + recent
+        async with asyncio.timeout(20):
+            async with _summarizer.run_stream("Summarize the conversation above.", message_history=old) as result:
+                await result.get_output()
+            return result.new_messages() + recent
     except Exception:
-        # If summarization fails, just trim to recent messages to avoid bloat
         return recent
 
 
 agent = Agent(
     _model(),
     retries=2,
+    model_settings=_MODEL_SETTINGS,
     system_prompt=(
         "You are Kuro. Just Kuro. "
         "You talk like a real person — lowercase, short sentences, no flourish. "
@@ -162,14 +202,13 @@ def _strip_tables(text: str) -> str:
 
 async def handle_agent_message(channel_id: int, user_message: str) -> str:
     try:
-        result = await asyncio.wait_for(
-            agent.run(user_message, message_history=_history[channel_id]),
-            timeout=45,
-        )
+        async with asyncio.timeout(45):
+            async with agent.run_stream(user_message, message_history=_history[channel_id]) as result:
+                output = await result.get_output()
+            _history[channel_id].extend(result.new_messages())
+            return _strip_tables(output)
     except asyncio.TimeoutError:
         return "took too long, try again"
-    _history[channel_id].extend(result.new_messages())
-    return _strip_tables(result.output)
 
 
 def clear_channel_history(channel_id: int) -> None:
