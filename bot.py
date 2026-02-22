@@ -266,7 +266,7 @@ async def on_message(message):
         user_input = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
         if user_input:
             mention = message.author.mention
-            sent = await message.channel.send(f'{mention} ▍')
+            sent = await message.channel.send(f'{mention} ▍', suppress_embeds=True)
             accumulated = ''
             current_status = ''
             loop = asyncio.get_event_loop()
@@ -287,7 +287,7 @@ async def on_message(message):
                             preview = (base[:_LIMIT - 60] + '...') if len(base) > _LIMIT - 60 else base
                             sep = '\n\n' if preview else ''
                             try:
-                                await sent.edit(content=_fmt(f'{preview}{sep}_{current_status}_'))
+                                await sent.edit(content=_fmt(f'{preview}{sep}_{current_status}_'), suppress=True)
                             except Exception:
                                 pass
                         elif kind == 'text':
@@ -298,24 +298,24 @@ async def on_message(message):
                                 preview = strip_tables(accumulated)
                                 display = (preview[:_LIMIT - 3] + '...') if len(preview) > _LIMIT else preview
                                 try:
-                                    await sent.edit(content=_fmt(display, ' ▍'))
+                                    await sent.edit(content=_fmt(display, ' ▍'), suppress=True)
                                 except Exception:
                                     pass
                                 last_edit = now
             except Exception as e:
-                await sent.edit(content=_fmt(f'error: {e}'))
+                await sent.edit(content=_fmt(f'error: {e}'), suppress=True)
                 return
 
             final = strip_tables(accumulated)
             if not final.strip():
-                await sent.edit(content=_fmt('...'))
+                await sent.edit(content=_fmt('...'), suppress=True)
             elif len(final) <= _LIMIT:
-                await sent.edit(content=_fmt(final))
+                await sent.edit(content=_fmt(final), suppress=True)
             else:
                 chunks = [final[i:i+_LIMIT] for i in range(0, len(final), _LIMIT)]
-                await sent.edit(content=_fmt(chunks[0]))
+                await sent.edit(content=_fmt(chunks[0]), suppress=True)
                 for chunk in chunks[1:]:
-                    await message.channel.send(chunk)
+                    await message.channel.send(chunk, suppress_embeds=True)
         return
 
     # =================================
@@ -350,7 +350,7 @@ async def on_message(message):
         else:
             user_input = message.content.strip()
             if user_input:
-                sent = await message.channel.send('▍')
+                sent = await message.channel.send('▍', suppress_embeds=True)
                 accumulated = ''
                 current_status = ''
                 loop = asyncio.get_event_loop()
@@ -366,7 +366,7 @@ async def on_message(message):
                                 preview = (base[:1820] + '...') if len(base) > 1820 else base
                                 sep = '\n\n' if preview else ''
                                 try:
-                                    await sent.edit(content=f'{preview}{sep}_{current_status}_')
+                                    await sent.edit(content=f'{preview}{sep}_{current_status}_', suppress=True)
                                 except Exception:
                                     pass
                             elif kind == 'text':
@@ -377,24 +377,24 @@ async def on_message(message):
                                     preview = strip_tables(accumulated)
                                     display = preview[:1897] + '...' if len(preview) > 1900 else preview
                                     try:
-                                        await sent.edit(content=display + ' ▍')
+                                        await sent.edit(content=display + ' ▍', suppress=True)
                                     except Exception:
                                         pass
                                     last_edit = now
                 except Exception as e:
-                    await sent.edit(content=f'error: {e}')
+                    await sent.edit(content=f'error: {e}', suppress=True)
                     return
 
                 final = strip_tables(accumulated)
                 if not final.strip():
-                    await sent.edit(content='...')
+                    await sent.edit(content='...', suppress=True)
                 elif len(final) <= 1900:
-                    await sent.edit(content=final)
+                    await sent.edit(content=final, suppress=True)
                 else:
                     chunks = [final[i:i+1900] for i in range(0, len(final), 1900)]
-                    await sent.edit(content=chunks[0])
+                    await sent.edit(content=chunks[0], suppress=True)
                     for chunk in chunks[1:]:
-                        await message.channel.send(chunk)
+                        await message.channel.send(chunk, suppress_embeds=True)
 
     # =================================
     # CTF CREATE
