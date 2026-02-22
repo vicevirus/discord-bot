@@ -202,16 +202,50 @@ def strip_tables(text: str) -> str:
 
 
 async def stream_agent_message(channel_id: int, user_message: str):
-    """Async generator that yields text deltas. Saves history when exhausted."""
-    try:
-        async with asyncio.timeout(45):
+    """Async generator that yields text deltas.
+    
+    Times out only if no token arrives for 30 s — active tool-calling / thinking
+    never triggers the timeout.  The producer runs in its own task so anyio cancel
+    scopes (used by pydantic-ai internally) are never crossed between tasks.
+    """
+    INACTIVITY_TIMEOUT = 30  # seconds without any new token
+
+    _SENTINEL = object()
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _producer():
+        try:
             async with agent.run_stream(user_message, message_history=_history[channel_id]) as result:
                 async for delta in result.stream_text(delta=True):
-                    yield delta
+                    await queue.put(delta)
                 new_msgs = result.new_messages()
             _history[channel_id].extend(new_msgs)
-    except asyncio.TimeoutError:
-        yield "\n\ntook too long, try again"
+        except Exception as exc:  # noqa: BLE001
+            await queue.put(exc)
+        finally:
+            await queue.put(_SENTINEL)
+
+    producer_task = asyncio.create_task(_producer())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=INACTIVITY_TIMEOUT)
+            except asyncio.TimeoutError:
+                yield "\n\n_no response for 30s, something went wrong_"
+                break
+
+            if item is _SENTINEL:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield item
+    finally:
+        producer_task.cancel()
+        try:
+            await producer_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 async def handle_agent_message(channel_id: int, user_message: str) -> str:
