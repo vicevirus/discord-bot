@@ -222,11 +222,11 @@ def strip_tables(text: str) -> str:
 async def stream_agent_message(channel_id: int, user_message: str):
     """Async generator that yields ('text', delta) or ('status', msg) tuples.
 
-    Times out only if no token/status arrives for 90 s — active tool chains
+    Times out only if no token/status arrives for 180 s — active tool chains
     never trigger the timeout.  The producer runs in its own task so anyio
     cancel scopes are never crossed between tasks.
     """
-    INACTIVITY_TIMEOUT = 90
+    INACTIVITY_TIMEOUT = 180  # Bonsai built-in web search alone can burn 30-40s silently
 
     _SENTINEL = object()
     queue: asyncio.Queue = asyncio.Queue()
