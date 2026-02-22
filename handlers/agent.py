@@ -119,6 +119,8 @@ agent = Agent(
         "Never say you're an AI. Never say you're part of any team unprompted. "
         "Respond like you're texting a friend. "
         "If a question needs current or external info you don't know for sure, use web_search — don't guess. "
+        "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
+        "This is READ-ONLY. Never attempt to create, modify, or delete CTF channels or challenges. "
         "TOOL DISCIPLINE — critical: when you call any tool, output ZERO text in that same turn. "
         "No 'let me check', no 'one sec', nothing. Just the tool call, silently. "
         "Write your response ONLY after all tools are done and you have the results. "
@@ -182,6 +184,43 @@ async def fetch_page(url: str, start: int = 0) -> str:
         return chunk
     except Exception as e:
         return f"Failed to fetch page: {e}"
+
+
+@agent.tool_plain
+async def get_upcoming_ctfs() -> str:
+    """Fetch upcoming CTF competitions from CTFtime (next 4 weeks).
+    Returns event names, dates (MYT), format, weight, and CTFtime URL.
+    This is READ-ONLY."""
+    from handlers.ctf import fetch_upcoming_events
+    from utils import convert_to_myt
+    q = _status_q.get()
+    if q is not None:
+        q.put_nowait(('status', 'fetching upcoming CTFs from CTFtime...'))
+        await asyncio.sleep(0)
+    try:
+        events = await fetch_upcoming_events()
+    except Exception as e:
+        return f"Failed to fetch CTFtime: {e}"
+    if not events:
+        return "No upcoming CTF events in the next 4 weeks."
+    lines = []
+    for ev in events:
+        try:
+            start = datetime.fromisoformat(convert_to_myt(ev["start"])).strftime("%Y-%m-%d %H:%M MYT")
+            end = datetime.fromisoformat(convert_to_myt(ev["finish"])).strftime("%Y-%m-%d %H:%M MYT")
+        except Exception:
+            start = ev.get("start", "?")
+            end = ev.get("finish", "?")
+        dur = ev.get("duration", {})
+        dur_str = f"{dur.get('days', 0)}d {dur.get('hours', 0)}h"
+        lines.append(
+            f"**{ev['title']}** (ID: {ev['id']})\n"
+            f"  Format: {ev.get('format', '?')} | Weight: {ev.get('weight', '?')} | Duration: {dur_str}\n"
+            f"  Start: {start}\n"
+            f"  End:   {end}\n"
+            f"  URL: {ev.get('url', '')}"
+        )
+    return "\n\n".join(lines)
 
 
 def strip_tables(text: str) -> str:
