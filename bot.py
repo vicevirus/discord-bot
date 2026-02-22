@@ -267,46 +267,39 @@ async def on_message(message):
         if user_input:
             sent = await message.channel.send('▍')
             accumulated = ''
+            current_status = ''
             loop = asyncio.get_event_loop()
             last_edit = loop.time()
-            last_token_time = loop.time()
 
-            async def _pulse():
-                """Edit the placeholder every 3 s during tool-call silences."""
-                cursors = ['▍', '▌', '▎', '▏', '▎', '▌']
-                i = 0
-                while True:
-                    await asyncio.sleep(3)
-                    if loop.time() - last_token_time >= 2.5:
-                        try:
-                            base = strip_tables(accumulated) if accumulated.strip() else ''
-                            cursor = cursors[i % len(cursors)]
-                            preview = (base[:1897] + '...') if len(base) > 1900 else base
-                            await sent.edit(content=(preview + ' ' if preview else '') + cursor)
-                        except Exception:
-                            pass
-                    i += 1
-
-            pulse_task = asyncio.create_task(_pulse())
             try:
                 async with message.channel.typing():
-                    async for delta in stream_agent_message(message.channel.id, user_input):
-                        accumulated += delta
-                        last_token_time = loop.time()
-                        now = loop.time()
-                        if now - last_edit >= 1.0 and accumulated.strip():
-                            preview = strip_tables(accumulated)
-                            display = preview[:1897] + '...' if len(preview) > 1900 else preview
+                    async for event in stream_agent_message(message.channel.id, user_input):
+                        kind, data = event
+                        if kind == 'status':
+                            current_status = data
+                            # Show status immediately regardless of throttle
+                            base = strip_tables(accumulated)
+                            preview = (base[:1820] + '...') if len(base) > 1820 else base
+                            sep = '\n\n' if preview else ''
                             try:
-                                await sent.edit(content=display + ' ▍')
+                                await sent.edit(content=f'{preview}{sep}_{current_status}_')
                             except Exception:
                                 pass
-                            last_edit = now
+                        elif kind == 'text':
+                            accumulated += data
+                            current_status = ''  # clear status once text starts flowing
+                            now = loop.time()
+                            if now - last_edit >= 1.0 and accumulated.strip():
+                                preview = strip_tables(accumulated)
+                                display = preview[:1897] + '...' if len(preview) > 1900 else preview
+                                try:
+                                    await sent.edit(content=display + ' ▍')
+                                except Exception:
+                                    pass
+                                last_edit = now
             except Exception as e:
-                await sent.edit(content=f'Agent error: {e}')
+                await sent.edit(content=f'error: {e}')
                 return
-            finally:
-                pulse_task.cancel()
 
             final = strip_tables(accumulated)
             if not final.strip():
@@ -354,45 +347,38 @@ async def on_message(message):
             if user_input:
                 sent = await message.channel.send('▍')
                 accumulated = ''
+                current_status = ''
                 loop = asyncio.get_event_loop()
                 last_edit = loop.time()
-                last_token_time = loop.time()
 
-                async def _pulse_dm():
-                    cursors = ['▍', '▌', '▎', '▏', '▎', '▌']
-                    i = 0
-                    while True:
-                        await asyncio.sleep(3)
-                        if loop.time() - last_token_time >= 2.5:
-                            try:
-                                base = strip_tables(accumulated) if accumulated.strip() else ''
-                                cursor = cursors[i % len(cursors)]
-                                preview = (base[:1897] + '...') if len(base) > 1900 else base
-                                await sent.edit(content=(preview + ' ' if preview else '') + cursor)
-                            except Exception:
-                                pass
-                        i += 1
-
-                pulse_task = asyncio.create_task(_pulse_dm())
                 try:
                     async with message.channel.typing():
-                        async for delta in stream_agent_message(message.channel.id, user_input):
-                            accumulated += delta
-                            last_token_time = loop.time()
-                            now = loop.time()
-                            if now - last_edit >= 1.0 and accumulated.strip():
-                                preview = strip_tables(accumulated)
-                                display = preview[:1897] + '...' if len(preview) > 1900 else preview
+                        async for event in stream_agent_message(message.channel.id, user_input):
+                            kind, data = event
+                            if kind == 'status':
+                                current_status = data
+                                base = strip_tables(accumulated)
+                                preview = (base[:1820] + '...') if len(base) > 1820 else base
+                                sep = '\n\n' if preview else ''
                                 try:
-                                    await sent.edit(content=display + ' ▍')
+                                    await sent.edit(content=f'{preview}{sep}_{current_status}_')
                                 except Exception:
                                     pass
-                                last_edit = now
+                            elif kind == 'text':
+                                accumulated += data
+                                current_status = ''
+                                now = loop.time()
+                                if now - last_edit >= 1.0 and accumulated.strip():
+                                    preview = strip_tables(accumulated)
+                                    display = preview[:1897] + '...' if len(preview) > 1900 else preview
+                                    try:
+                                        await sent.edit(content=display + ' ▍')
+                                    except Exception:
+                                        pass
+                                    last_edit = now
                 except Exception as e:
-                    await sent.edit(content=f'Agent error: {e}')
+                    await sent.edit(content=f'error: {e}')
                     return
-                finally:
-                    pulse_task.cancel()
 
                 final = strip_tables(accumulated)
                 if not final.strip():

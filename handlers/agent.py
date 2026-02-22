@@ -1,4 +1,5 @@
 from collections import defaultdict
+from contextvars import ContextVar
 from datetime import datetime, timezone, timedelta
 import json
 import re
@@ -11,6 +12,10 @@ from ddgs import DDGS
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.providers.anthropic import AnthropicProvider
+
+# Holds the active stream's queue so async tools can push status events into it.
+# ContextVar ensures concurrent streams don't interfere.
+_status_q: ContextVar[asyncio.Queue | None] = ContextVar('_kuro_status_q', default=None)
 
 from config import BONSAI_API_KEY, AGENT_MODEL, AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT
 
@@ -132,11 +137,16 @@ def _current_date() -> str:
 
 
 @agent.tool_plain
-def web_search(query: str) -> str:
+async def web_search(query: str) -> str:
     """Search the web using DuckDuckGo. Use this for current events, CTF writeups, CVEs, tools, or anything you're unsure about."""
+    q = _status_q.get()
+    if q is not None:
+        q.put_nowait(('status', f'searching: *{query}*'))
+        await asyncio.sleep(0)  # yield so consumer can render the status
     try:
-        with DDGS(timeout=10) as ddgs:
-            results = list(ddgs.text(query, max_results=5))
+        results = await asyncio.to_thread(
+            lambda: list(DDGS(timeout=10).text(query, max_results=5))
+        )
         if not results:
             return "No results found."
         return "\n\n".join(
@@ -148,12 +158,17 @@ def web_search(query: str) -> str:
 
 
 @agent.tool_plain
-def fetch_page(url: str, start: int = 0) -> str:
+async def fetch_page(url: str, start: int = 0) -> str:
     """Fetch and read the content of a webpage. Use after web_search for full writeup/CVE details.
     If the content is truncated, call again with start=8000 to get the next chunk, and so on."""
+    q = _status_q.get()
+    if q is not None:
+        label = url.split('//')[-1][:60]
+        q.put_nowait(('status', f'reading: `{label}`'))
+        await asyncio.sleep(0)
     try:
-        with httpx.Client(headers=_BROWSER_HEADERS, follow_redirects=True, timeout=15) as client:
-            resp = client.get(url)
+        async with httpx.AsyncClient(headers=_BROWSER_HEADERS, follow_redirects=True, timeout=15) as client:
+            resp = await client.get(url)
             resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
@@ -205,25 +220,26 @@ def strip_tables(text: str) -> str:
 
 
 async def stream_agent_message(channel_id: int, user_message: str):
-    """Async generator that yields text deltas.
-    
-    Times out only if no token arrives for 30 s — active tool-calling / thinking
-    never triggers the timeout.  The producer runs in its own task so anyio cancel
-    scopes (used by pydantic-ai internally) are never crossed between tasks.
+    """Async generator that yields ('text', delta) or ('status', msg) tuples.
+
+    Times out only if no token/status arrives for 90 s — active tool chains
+    never trigger the timeout.  The producer runs in its own task so anyio
+    cancel scopes are never crossed between tasks.
     """
-    INACTIVITY_TIMEOUT = 90  # seconds without any new token
-    # 90 s covers multi-step tool chains (web search + several fetch_page calls).
-    # Genuine network stalls surface as TCP/TLS errors well before this.
+    INACTIVITY_TIMEOUT = 90
 
     _SENTINEL = object()
-
     queue: asyncio.Queue = asyncio.Queue()
+
+    # Set the status queue in context BEFORE creating the task so the task
+    # (and any coroutines it awaits, including async tools) inherits it.
+    token = _status_q.set(queue)
 
     async def _producer():
         try:
             async with agent.run_stream(user_message, message_history=_history[channel_id]) as result:
                 async for delta in result.stream_text(delta=True):
-                    await queue.put(delta)
+                    await queue.put(('text', delta))
                 new_msgs = result.new_messages()
             _history[channel_id].extend(new_msgs)
         except Exception as exc:  # noqa: BLE001
@@ -237,15 +253,16 @@ async def stream_agent_message(channel_id: int, user_message: str):
             try:
                 item = await asyncio.wait_for(queue.get(), timeout=INACTIVITY_TIMEOUT)
             except asyncio.TimeoutError:
-                yield "\n\n_no response for 30s, something went wrong_"
+                yield ('text', '\n\n_timed out waiting for a response_')
                 break
 
             if item is _SENTINEL:
                 break
             if isinstance(item, Exception):
                 raise item
-            yield item
+            yield item  # ('text', str) or ('status', str)
     finally:
+        _status_q.reset(token)
         producer_task.cancel()
         try:
             await producer_task
