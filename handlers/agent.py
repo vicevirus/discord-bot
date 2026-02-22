@@ -122,6 +122,9 @@ agent = Agent(
         "Keep it short. Don't over-explain. Don't use formal words or phrases like 'certainly', 'sparring partner', 'I'm here for you'. "
         "Never say you're an AI. Never say you're part of any team unprompted. "
         "Respond like you're texting a friend. "
+        "ABSOLUTELY NO PREAMBLE before tool calls. If you need to search or fetch anything, call the tool IMMEDIATELY with zero text. "
+        "Do NOT say 'let me research', 'alright', 'great question', 'I'll look into that', or ANYTHING before a tool call. "
+        "Only write text AFTER you have all tool results in hand. "
         "If a question needs current or external info you don't know for sure, use web_search — don't guess. "
         "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
         "This is READ-ONLY. Never attempt to create, modify, or delete CTF channels or challenges. "
@@ -154,8 +157,9 @@ async def web_search(query: str) -> str:
         q.put_nowait(('status', f'searching: *{query}*'))
         await asyncio.sleep(0)  # yield so consumer can render the status
     try:
-        results = await asyncio.to_thread(
-            lambda: list(DDGS(timeout=10).text(query, max_results=5))
+        results = await asyncio.wait_for(
+            asyncio.to_thread(lambda: list(DDGS(timeout=10).text(query, max_results=5))),
+            timeout=20,
         )
         if not results:
             return "No results found."
@@ -163,6 +167,8 @@ async def web_search(query: str) -> str:
             f"**{r['title']}**\n{r['href']}\n{r['body']}"
             for r in results
         )
+    except asyncio.TimeoutError:
+        return "Search timed out. Try a shorter query."
     except Exception as e:
         return f"Search failed: {e}"
 
@@ -345,8 +351,9 @@ async def image_search(query: str) -> str:
         await asyncio.sleep(0)
     # --- Try DDG images API first ---
     try:
-        results = await asyncio.to_thread(
-            lambda: list(DDGS(timeout=10).images(query, max_results=12))
+        results = await asyncio.wait_for(
+            asyncio.to_thread(lambda: list(DDGS(timeout=10).images(query, max_results=12))),
+            timeout=20,
         )
         for r in results:
             url = r.get('image', '')
@@ -364,8 +371,9 @@ async def image_search(query: str) -> str:
         pass  # fall through to text-search fallback
     # --- Fallback: text search, extract direct image URLs from snippets ---
     try:
-        text_results = await asyncio.to_thread(
-            lambda: list(DDGS(timeout=10).text(f'{query} meme site:imgur.com OR site:i.redd.it OR site:media.tenor.com', max_results=8))
+        text_results = await asyncio.wait_for(
+            asyncio.to_thread(lambda: list(DDGS(timeout=10).text(f'{query} meme site:imgur.com OR site:i.redd.it OR site:media.tenor.com', max_results=8))),
+            timeout=20,
         )
         candidate_urls = []
         for r in text_results:
@@ -480,7 +488,7 @@ async def stream_agent_message(channel_id: int, user_message: str):
     On a 400 provider error the channel history is trimmed and retried once
     automatically so the bot never gets permanently stuck after a bad turn.
     """
-    INACTIVITY_TIMEOUT = 180  # Bonsai built-in web search alone can burn 30-40s silently
+    INACTIVITY_TIMEOUT = 60  # if nothing arrives for 60s, something is wrong
 
     _SENTINEL = object()
     queue: asyncio.Queue = asyncio.Queue()
@@ -489,8 +497,18 @@ async def stream_agent_message(channel_id: int, user_message: str):
 
     async def _run_once(history: list):
         async with agent.run_stream(user_message, message_history=history) as result:
+            got_text = False
+            last_chunk = ''
             async for delta in result.stream_text(delta=True):
+                got_text = True
+                last_chunk = delta
                 await queue.put(('text', delta))
+            if not got_text:
+                # Model called tools but produced no text — send something so the user isn't left with ▍
+                await queue.put(('text', '...'))
+            elif last_chunk and last_chunk.rstrip().endswith('---'):
+                # Stream cut off mid-response (Bonsai token limit)
+                await queue.put(('text', '\n_[response cut off — try asking in smaller parts]_'))
             return result.new_messages()
 
     async def _producer():
