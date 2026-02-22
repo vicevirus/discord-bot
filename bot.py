@@ -267,31 +267,57 @@ async def on_message(message):
         if user_input:
             sent = await message.channel.send('▍')
             accumulated = ''
-            last_edit = asyncio.get_event_loop().time()
-            try:
-                async for delta in stream_agent_message(message.channel.id, user_input):
-                    accumulated += delta
-                    now = asyncio.get_event_loop().time()
-                    if now - last_edit >= 1.0 and accumulated.strip():
-                        preview = strip_tables(accumulated)
-                        display = preview[:1897] + '...' if len(preview) > 1900 else preview
+            loop = asyncio.get_event_loop()
+            last_edit = loop.time()
+            last_token_time = loop.time()
+
+            async def _pulse():
+                """Edit the placeholder every 3 s during tool-call silences."""
+                cursors = ['▍', '▌', '▎', '▏', '▎', '▌']
+                i = 0
+                while True:
+                    await asyncio.sleep(3)
+                    if loop.time() - last_token_time >= 2.5:
                         try:
-                            await sent.edit(content=display + ' ▍')
+                            base = strip_tables(accumulated) if accumulated.strip() else ''
+                            cursor = cursors[i % len(cursors)]
+                            preview = (base[:1897] + '...') if len(base) > 1900 else base
+                            await sent.edit(content=(preview + ' ' if preview else '') + cursor)
                         except Exception:
                             pass
-                        last_edit = now
-                final = strip_tables(accumulated)
-                if not final.strip():
-                    await sent.edit(content='...')
-                elif len(final) <= 1900:
-                    await sent.edit(content=final)
-                else:
-                    chunks = [final[i:i+1900] for i in range(0, len(final), 1900)]
-                    await sent.edit(content=chunks[0])
-                    for chunk in chunks[1:]:
-                        await message.channel.send(chunk)
+                    i += 1
+
+            pulse_task = asyncio.create_task(_pulse())
+            try:
+                async with message.channel.typing():
+                    async for delta in stream_agent_message(message.channel.id, user_input):
+                        accumulated += delta
+                        last_token_time = loop.time()
+                        now = loop.time()
+                        if now - last_edit >= 1.0 and accumulated.strip():
+                            preview = strip_tables(accumulated)
+                            display = preview[:1897] + '...' if len(preview) > 1900 else preview
+                            try:
+                                await sent.edit(content=display + ' ▍')
+                            except Exception:
+                                pass
+                            last_edit = now
             except Exception as e:
                 await sent.edit(content=f'Agent error: {e}')
+                return
+            finally:
+                pulse_task.cancel()
+
+            final = strip_tables(accumulated)
+            if not final.strip():
+                await sent.edit(content='...')
+            elif len(final) <= 1900:
+                await sent.edit(content=final)
+            else:
+                chunks = [final[i:i+1900] for i in range(0, len(final), 1900)]
+                await sent.edit(content=chunks[0])
+                for chunk in chunks[1:]:
+                    await message.channel.send(chunk)
         return
 
     # =================================
@@ -328,31 +354,56 @@ async def on_message(message):
             if user_input:
                 sent = await message.channel.send('▍')
                 accumulated = ''
-                last_edit = asyncio.get_event_loop().time()
-                try:
-                    async for delta in stream_agent_message(message.channel.id, user_input):
-                        accumulated += delta
-                        now = asyncio.get_event_loop().time()
-                        if now - last_edit >= 1.0 and accumulated.strip():
-                            preview = strip_tables(accumulated)
-                            display = preview[:1897] + '...' if len(preview) > 1900 else preview
+                loop = asyncio.get_event_loop()
+                last_edit = loop.time()
+                last_token_time = loop.time()
+
+                async def _pulse_dm():
+                    cursors = ['▍', '▌', '▎', '▏', '▎', '▌']
+                    i = 0
+                    while True:
+                        await asyncio.sleep(3)
+                        if loop.time() - last_token_time >= 2.5:
                             try:
-                                await sent.edit(content=display + ' ▍')
+                                base = strip_tables(accumulated) if accumulated.strip() else ''
+                                cursor = cursors[i % len(cursors)]
+                                preview = (base[:1897] + '...') if len(base) > 1900 else base
+                                await sent.edit(content=(preview + ' ' if preview else '') + cursor)
                             except Exception:
                                 pass
-                            last_edit = now
-                    final = strip_tables(accumulated)
-                    if not final.strip():
-                        await sent.edit(content='...')
-                    elif len(final) <= 1900:
-                        await sent.edit(content=final)
-                    else:
-                        chunks = [final[i:i+1900] for i in range(0, len(final), 1900)]
-                        await sent.edit(content=chunks[0])
-                        for chunk in chunks[1:]:
-                            await message.channel.send(chunk)
+                        i += 1
+
+                pulse_task = asyncio.create_task(_pulse_dm())
+                try:
+                    async with message.channel.typing():
+                        async for delta in stream_agent_message(message.channel.id, user_input):
+                            accumulated += delta
+                            last_token_time = loop.time()
+                            now = loop.time()
+                            if now - last_edit >= 1.0 and accumulated.strip():
+                                preview = strip_tables(accumulated)
+                                display = preview[:1897] + '...' if len(preview) > 1900 else preview
+                                try:
+                                    await sent.edit(content=display + ' ▍')
+                                except Exception:
+                                    pass
+                                last_edit = now
                 except Exception as e:
                     await sent.edit(content=f'Agent error: {e}')
+                    return
+                finally:
+                    pulse_task.cancel()
+
+                final = strip_tables(accumulated)
+                if not final.strip():
+                    await sent.edit(content='...')
+                elif len(final) <= 1900:
+                    await sent.edit(content=final)
+                else:
+                    chunks = [final[i:i+1900] for i in range(0, len(final), 1900)]
+                    await sent.edit(content=chunks[0])
+                    for chunk in chunks[1:]:
+                        await message.channel.send(chunk)
 
     # =================================
     # CTF CREATE

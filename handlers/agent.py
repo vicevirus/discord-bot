@@ -114,6 +114,9 @@ agent = Agent(
         "Never say you're an AI. Never say you're part of any team unprompted. "
         "Respond like you're texting a friend. "
         "If a question needs current or external info you don't know for sure, use web_search — don't guess. "
+        "TOOL DISCIPLINE — critical: when you call any tool, output ZERO text in that same turn. "
+        "No 'let me check', no 'one sec', nothing. Just the tool call, silently. "
+        "Write your response ONLY after all tools are done and you have the results. "
         "FORMATTING RULES for Discord: never use markdown tables (pipes | don't render). "
         "For structured info, use bullet points or numbered lists instead. "
         "Bold (**text**) and inline code (`code`) are fine. Keep formatting minimal."
@@ -208,7 +211,9 @@ async def stream_agent_message(channel_id: int, user_message: str):
     never triggers the timeout.  The producer runs in its own task so anyio cancel
     scopes (used by pydantic-ai internally) are never crossed between tasks.
     """
-    INACTIVITY_TIMEOUT = 30  # seconds without any new token
+    INACTIVITY_TIMEOUT = 90  # seconds without any new token
+    # 90 s covers multi-step tool chains (web search + several fetch_page calls).
+    # Genuine network stalls surface as TCP/TLS errors well before this.
 
     _SENTINEL = object()
 
