@@ -87,7 +87,7 @@ _summarizer = Agent(
     _model(),
     instructions=(
         "Summarize the conversation concisely. Keep all technical details, CTF challenge names, "
-        "flags, code, and decisions. Skip small talk. No preamble."
+        "flags, code, and decisions. Skip small talk. No preamble. No emojis."
     ),
     retries=2,
     model_settings=_MODEL_SETTINGS,
@@ -509,7 +509,18 @@ async def stream_agent_message(channel_id: int, user_message: str):
                 await queue.put(('text', delta))
             print(f'[kuro] stream done: got_text={got_text} chunks={text_chunks} last={repr(last_chunk[-30:]) if last_chunk else ""}', flush=True)
             if not got_text:
-                await queue.put(('text', '...'))
+                # stream_text yielded nothing (model only did tool calls then stopped streaming)
+                # fall back to the full buffered output
+                try:
+                    fallback = await result.get_output()
+                    if fallback and fallback.strip():
+                        print(f'[kuro] fallback get_output: {repr(fallback[:80])}', flush=True)
+                        await queue.put(('text', fallback))
+                    else:
+                        await queue.put(('text', '...'))
+                except Exception as fb_err:
+                    print(f'[kuro] fallback failed: {fb_err}', flush=True)
+                    await queue.put(('text', '...'))
             elif last_chunk and last_chunk.rstrip().endswith('---'):
                 await queue.put(('text', '\n_[response cut off — try asking in smaller parts]_'))
             return result.new_messages()
