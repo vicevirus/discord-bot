@@ -25,8 +25,8 @@ CTF_ANNOUNCE_CHANNEL_ID = 1251192205381472296
 
 BONSAI_API_KEY = os.getenv("BONSAI_API_KEY")
 AGENT_MODEL = "claude-opus-4-6"
-AGENT_SUMMARIZE_AFTER = 20
-AGENT_KEEP_RECENT = 6
+AGENT_SUMMARIZE_AFTER = 100
+AGENT_KEEP_RECENT = 10
 
 
 # =============================================================================
