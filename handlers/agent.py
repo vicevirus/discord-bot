@@ -349,31 +349,53 @@ def strip_tables(text: str) -> str:
     return "\n".join(result)
 
 
+def _is_provider_400(exc: Exception) -> bool:
+    """True if the exception is a Bonsai/Anthropic 400 provider error."""
+    s = str(exc).lower()
+    return "400" in s or "provider returned error" in s or "bad_request" in s
+
+
 async def stream_agent_message(channel_id: int, user_message: str):
     """Async generator that yields ('text', delta) or ('status', msg) tuples.
 
     Times out only if no token/status arrives for 180 s — active tool chains
     never trigger the timeout.  The producer runs in its own task so anyio
     cancel scopes are never crossed between tasks.
+
+    On a 400 provider error the channel history is trimmed and retried once
+    automatically so the bot never gets permanently stuck after a bad turn.
     """
     INACTIVITY_TIMEOUT = 180  # Bonsai built-in web search alone can burn 30-40s silently
 
     _SENTINEL = object()
     queue: asyncio.Queue = asyncio.Queue()
 
-    # Set the status queue in context BEFORE creating the task so the task
-    # (and any coroutines it awaits, including async tools) inherits it.
     token = _status_q.set(queue)
+
+    async def _run_once(history: list):
+        async with agent.run_stream(user_message, message_history=history) as result:
+            async for delta in result.stream_text(delta=True):
+                await queue.put(('text', delta))
+            return result.new_messages()
 
     async def _producer():
         try:
-            async with agent.run_stream(user_message, message_history=_history[channel_id]) as result:
-                async for delta in result.stream_text(delta=True):
-                    await queue.put(('text', delta))
-                new_msgs = result.new_messages()
+            new_msgs = await _run_once(_history[channel_id])
             _history[channel_id].extend(new_msgs)
-        except Exception as exc:  # noqa: BLE001
-            await queue.put(exc)
+        except Exception as exc:
+            if _is_provider_400(exc):
+                # Trim history and retry once — clears whatever caused the 400
+                kept = _history[channel_id][-AGENT_KEEP_RECENT:]
+                _history[channel_id] = kept
+                try:
+                    new_msgs = await _run_once(_history[channel_id])
+                    _history[channel_id].extend(new_msgs)
+                except Exception as exc2:
+                    # Still failing — clear history entirely so next turn is clean
+                    _history[channel_id] = []
+                    await queue.put(exc2)
+            else:
+                await queue.put(exc)
         finally:
             await queue.put(_SENTINEL)
 
