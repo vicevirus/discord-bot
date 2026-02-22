@@ -10,6 +10,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
+import httpx
 
 from config import (
     DISCORD_TOKEN,
@@ -52,6 +53,49 @@ from handlers import (
     stream_agent_message,
     strip_tables,
 )
+
+
+# =============================================================================
+# SAFE ATTACHMENT READER
+# =============================================================================
+
+_MAX_ATTACH_BYTES = 50 * 1024   # 50 KB per file
+_MAX_TOTAL_BYTES  = 100 * 1024  # 100 KB total
+
+async def read_txt_attachments(message) -> str:
+    """
+    Read .txt attachments from a Discord message safely into memory.
+    - Whitelist: .txt extension only (case-insensitive)
+    - MIME check: content-type must start with text/
+    - Size caps: 50 KB/file, 100 KB total
+    - Never saved to disk
+    """
+    if not message.attachments:
+        return ''
+    parts = []
+    total = 0
+    async with httpx.AsyncClient(timeout=10) as client:
+        for att in message.attachments:
+            name = att.filename or ''
+            if not name.lower().endswith('.txt'):
+                continue
+            ct = (att.content_type or '').split(';')[0].strip().lower()
+            if ct and not ct.startswith('text/'):
+                continue
+            size = att.size or 0
+            if size > _MAX_ATTACH_BYTES:
+                continue
+            if total + size > _MAX_TOTAL_BYTES:
+                break
+            try:
+                resp = await client.get(att.url)
+                raw = resp.content[:_MAX_ATTACH_BYTES]
+                total += len(raw)
+                text = raw.decode('utf-8', errors='replace')
+                parts.append(f'[attachment: {name}]\n{text}')
+            except Exception:
+                pass
+    return '\n\n'.join(parts)
 
 
 # =============================================================================
@@ -264,6 +308,9 @@ async def on_message(message):
         and bot.user in message.mentions
     ):
         user_input = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
+        attachment_text = await read_txt_attachments(message)
+        if attachment_text:
+            user_input = (user_input + '\n\n' + attachment_text).strip()
         if user_input:
             mention = message.author.mention
             sent = await message.channel.send(f'{mention} ▍', suppress_embeds=True)
@@ -349,6 +396,9 @@ async def on_message(message):
         # Any other DM — talk to Kuro
         else:
             user_input = message.content.strip()
+            attachment_text = await read_txt_attachments(message)
+            if attachment_text:
+                user_input = (user_input + '\n\n' + attachment_text).strip()
             if user_input:
                 sent = await message.channel.send('▍', suppress_embeds=True)
                 accumulated = ''
