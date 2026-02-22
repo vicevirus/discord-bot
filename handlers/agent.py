@@ -163,9 +163,90 @@ async def web_search(query: str) -> str:
         return f"Search failed: {e}"
 
 
+_GH_TREE = re.compile(
+    r"https?://github\.com/([^/]+)/([^/]+)/tree/([^/]+)/(.*)"
+)
+_GH_BLOB = re.compile(
+    r"https?://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*)"
+)
+_GH_REPO = re.compile(
+    r"https?://github\.com/([^/]+)/([^/\?#]+)/?(?:[^/]*)$"
+)
+
+
+async def _fetch_github(url: str, start: int) -> str | None:
+    """Handle github.com URLs via API/raw instead of scraping HTML.
+    Returns content string or None if not a recognised GitHub URL."""
+    api_headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    async with httpx.AsyncClient(headers=api_headers, follow_redirects=True, timeout=15) as client:
+        # Tree (directory listing)
+        m = _GH_TREE.match(url)
+        if m:
+            owner, repo, ref, path = m.groups()
+            path = path.rstrip('/')
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}"
+            resp = await client.get(api_url)
+            resp.raise_for_status()
+            items = resp.json()
+            if isinstance(items, list):
+                lines = [f"Directory: {owner}/{repo}/{path} @ {ref[:8]}\n"]
+                for item in items:
+                    icon = "📁" if item["type"] == "dir" else "📄"
+                    lines.append(f"{icon} {item['name']} ({item.get('size', 0)} bytes)" if item["type"] == "file"
+                                 else f"{icon} {item['name']}/")
+                text = "\n".join(lines)
+            else:
+                # Single file returned (path was a file, not dir)
+                raw_url = items.get("download_url") or items.get("html_url", url)
+                resp2 = await client.get(raw_url)
+                text = resp2.text
+            chunk = text[start:start + 8000]
+            if not chunk:
+                return "No more content at this offset."
+            if start + 8000 < len(text):
+                chunk += f"\n...[truncated — call fetch_page with start={start + 8000} for more]"
+            return chunk
+
+        # Blob (single file view) → fetch raw content
+        m = _GH_BLOB.match(url)
+        if m:
+            owner, repo, ref, path = m.groups()
+            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
+            resp = await client.get(raw_url)
+            resp.raise_for_status()
+            text = resp.text
+            chunk = text[start:start + 8000]
+            if not chunk:
+                return "No more content at this offset."
+            if start + 8000 < len(text):
+                chunk += f"\n...[truncated — call fetch_page with start={start + 8000} for more]"
+            return chunk
+
+        # Bare repo URL → repo info
+        m = _GH_REPO.match(url)
+        if m:
+            owner, repo = m.group(1), m.group(2)
+            resp = await client.get(f"https://api.github.com/repos/{owner}/{repo}")
+            resp.raise_for_status()
+            d = resp.json()
+            text = (
+                f"Repo: {d.get('full_name')}\n"
+                f"Description: {d.get('description')}\n"
+                f"Stars: {d.get('stargazers_count')}  Forks: {d.get('forks_count')}\n"
+                f"Language: {d.get('language')}\n"
+                f"Topics: {', '.join(d.get('topics', []))}\n"
+                f"Default branch: {d.get('default_branch')}\n"
+                f"URL: {d.get('html_url')}\n"
+            )
+            return text
+
+    return None
+
+
 @agent.tool_plain
 async def fetch_page(url: str, start: int = 0) -> str:
     """Fetch and read the content of a webpage. Use after web_search for full writeup/CVE details.
+    GitHub URLs (tree/blob/repo) are handled via the GitHub API for clean output.
     If the content is truncated, call again with start=8000 to get the next chunk, and so on."""
     q = _status_q.get()
     if q is not None:
@@ -173,6 +254,12 @@ async def fetch_page(url: str, start: int = 0) -> str:
         q.put_nowait(('status', f'reading: `{label}`'))
         await asyncio.sleep(0)
     try:
+        # GitHub-specific fast path
+        if "github.com" in url:
+            result = await _fetch_github(url, start)
+            if result is not None:
+                return result
+
         async with httpx.AsyncClient(headers=_BROWSER_HEADERS, follow_redirects=True, timeout=15) as client:
             resp = await client.get(url)
             resp.raise_for_status()
