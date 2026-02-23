@@ -139,7 +139,7 @@ agent = Agent(
         "search_twitter returns live results directly from Twitter. Use it for anything where recency matters: news, announcements, community chatter, tracking a person or org. "
         "If search_twitter returns no results or fails (token might be dead), fall back to web_search with a site: dork (site:x.com, site:reddit.com, etc.). "
         "Handle autocorrect: if search_twitter returns no results for a specific user, the handle might be wrong (e.g. missing underscore, different capitalization). "
-        "Do a quick web_search to find their correct Twitter handle, then retry search_twitter with the right one. "
+        "Search Twitter itself to find the correct handle — call search_twitter with just the name as a keyword (e.g. 'Rectifyq'), look at the screen_names in the results, then retry with from:correct_handle. "
         "For non-Twitter social content (Reddit threads, LinkedIn posts, etc.), use web_search with site: dorks — site:reddit.com, site:linkedin.com, site:instagram.com, site:youtube.com, site:facebook.com. TikTok not indexed well, skip it. "
         "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
         "This is READ-ONLY. Never attempt to create, modify, or delete CTF channels or challenges. "
