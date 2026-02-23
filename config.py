@@ -25,6 +25,7 @@ CTF_ANNOUNCE_CHANNEL_ID = 1251192205381472296
 
 TWITTER_AUTH_TOKEN = os.getenv("TWITTER_AUTH_TOKEN", "")
 TWITTER_CT0 = os.getenv("TWITTER_CT0", "")
+OWNER_DISCORD_ID = int(os.getenv("OWNER_DISCORD_ID", "0"))
 
 
 # =============================================================================

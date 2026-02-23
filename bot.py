@@ -18,6 +18,9 @@ from config import (
     SERVER_ID,
     SPAMMING_CHANNEL_ID,
     CHECK_INTERVAL,
+    TWITTER_AUTH_TOKEN,
+    TWITTER_CT0,
+    OWNER_DISCORD_ID,
 )
 from handlers import (
     # CTF handlers
@@ -127,6 +130,51 @@ async def is_member_of_guild(user):
 # BACKGROUND TASKS
 # =============================================================================
 
+async def check_twitter_token():
+    """Background task: check Twitter token health every 24h, DM owner if dead."""
+    await bot.wait_until_ready()
+    await asyncio.sleep(60)  # wait 1 min after startup before first check
+    while not bot.is_closed():
+        if TWITTER_AUTH_TOKEN and TWITTER_CT0:
+            bearer = "Bearer AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F"
+            try:
+                import json as _json
+                async with httpx.AsyncClient(timeout=10) as c:
+                    r = await c.get(
+                        "https://x.com/i/api/graphql/bshMIjqDk8LTXTq4w91WKw/SearchTimeline",
+                        headers={
+                            "authorization": bearer,
+                            "cookie": f"auth_token={TWITTER_AUTH_TOKEN}; ct0={TWITTER_CT0}",
+                            "x-csrf-token": TWITTER_CT0,
+                            "x-twitter-auth-type": "OAuth2Session",
+                            "x-twitter-active-user": "yes",
+                            "origin": "https://x.com",
+                            "referer": "https://x.com/search",
+                            "user-agent": "Mozilla/5.0",
+                        },
+                        params={
+                            "variables": _json.dumps({"rawQuery": "test", "count": 1, "querySource": "typed_query", "product": "Latest"}),
+                            "features": _json.dumps({"responsive_web_graphql_exclude_directive_enabled": True}),
+                        },
+                    )
+                if r.status_code in (401, 403):
+                    print(f"[twitter-health] Token dead: HTTP {r.status_code}")
+                    if OWNER_DISCORD_ID:
+                        try:
+                            owner = await bot.fetch_user(OWNER_DISCORD_ID)
+                            await owner.send(
+                                f"**Twitter token expired** (HTTP {r.status_code})\n"
+                                "Update `TWITTER_AUTH_TOKEN` and `TWITTER_CT0` in server `.env`, then `pm2 restart discord-bot`."
+                            )
+                        except Exception as dm_err:
+                            print(f"[twitter-health] Could not DM owner: {dm_err}")
+                else:
+                    print(f"[twitter-health] Token OK (HTTP {r.status_code})")
+            except Exception as e:
+                print(f"[twitter-health] Check failed: {e}")
+        await asyncio.sleep(CHECK_INTERVAL)
+
+
 async def check_yearly_update():
     """Background task to check for year change and update categories."""
     await bot.wait_until_ready()
@@ -174,6 +222,7 @@ async def on_ready():
         print(f"Failed to sync commands: {e}")
     
     bot.loop.create_task(check_yearly_update())
+    bot.loop.create_task(check_twitter_token())
 
 
 @bot.event
