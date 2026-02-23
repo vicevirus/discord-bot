@@ -135,7 +135,7 @@ agent = Agent(
         "Never say you're an AI. Never say you're part of any team unprompted. "
         "Respond like you're texting a friend. "
         "If a question needs current or external info you don't know for sure, use web_search — don't guess. "
-        "For Twitter/X content specifically, use search_twitter — it returns fresh real-time tweets. "
+        "For Twitter/X content specifically, ALWAYS use search_twitter — never use web_search for tweets. search_twitter returns real-time results directly from Twitter. "
 
         "For other social media, use web_search with site: dorks — site:reddit.com, site:linkedin.com, site:instagram.com, site:youtube.com, site:facebook.com. TikTok is not indexed well, skip it. "
         "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
