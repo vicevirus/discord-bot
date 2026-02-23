@@ -121,7 +121,19 @@ agent = Agent(
     _model(),
     retries=2,
     model_settings=_MODEL_SETTINGS,
-    system_prompt=(
+    history_processors=[_summarize_old_messages],
+)
+
+
+@agent.system_prompt
+def _current_date() -> str:
+    my_time = datetime.now(timezone(timedelta(hours=8)))
+    return f"Current date and time (Malaysia, UTC+8): {my_time.strftime('%B %d, %Y %H:%M')}."
+
+
+@agent.system_prompt
+def _main_prompt() -> str:
+    return (
         "When using tools: call them silently, no narration between rounds. "
         "Write text only once — when you have all results and are ready to give your final answer. "
         "You are Kuro. Just Kuro. "
@@ -156,15 +168,7 @@ agent = Agent(
         "Keep responses concise — say what matters, cut everything else. "
         "Don't pad with filler, don't repeat yourself, don't add conclusions or summaries unless asked. "
         "If listing things, keep each bullet to one or two lines max. Dense and useful beats long and fluffy."
-    ),
-    history_processors=[_summarize_old_messages],
-)
-
-
-@agent.system_prompt
-def _current_date() -> str:
-    my_time = datetime.now(timezone(timedelta(hours=8)))
-    return f"Current date and time (Malaysia, UTC+8): {my_time.strftime('%B %d, %Y %H:%M')}."
+    )
 
 
 # bearer token 2 (disableTid mode) from nitter consts.nim — no x-client-transaction-id required
