@@ -135,6 +135,7 @@ agent = Agent(
         "Never say you're an AI. Never say you're part of any team unprompted. "
         "Respond like you're texting a friend. "
         "If a question needs current or external info you don't know for sure, use web_search — don't guess. "
+        "For Twitter/X content specifically, use search_twitter which searches via nitter (no login needed). "
         "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
         "This is READ-ONLY. Never attempt to create, modify, or delete CTF channels or challenges. "
         "When asked for a meme, image, gif, or anything visual: "
@@ -157,6 +158,54 @@ agent = Agent(
 def _current_date() -> str:
     my_time = datetime.now(timezone(timedelta(hours=8)))
     return f"Current date and time (Malaysia, UTC+8): {my_time.strftime('%B %d, %Y %H:%M')}."
+
+
+_NITTER_INSTANCES = [
+    "https://xcancel.com",
+    "https://nitter.privacyredirect.com",
+    "https://nitter.poast.org",
+]
+
+@agent.tool_plain
+async def search_twitter(query: str) -> str:
+    """Search Twitter/X posts via nitter (no login required). Use this for social media opinions, community chatter, announcements."""
+    q = _status_q.get()
+    if q is not None:
+        q.put_nowait(('status', f'searching twitter: *{query}*'))
+        await asyncio.sleep(0)
+    encoded = query.replace(' ', '+')
+    async with httpx.AsyncClient(headers=_BROWSER_HEADERS, follow_redirects=True, timeout=15) as client:
+        for base in _NITTER_INSTANCES:
+            try:
+                url = f"{base}/search?q={encoded}&f=tweets"
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    continue
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                tweets = []
+                for item in soup.select('.timeline-item')[:10]:
+                    user = item.select_one('.username')
+                    content = item.select_one('.tweet-content')
+                    date = item.select_one('.tweet-date a')
+                    if content:
+                        u = user.get_text(strip=True) if user else 'unknown'
+                        d = date['title'] if date and date.get('title') else ''
+                        tweets.append(f"{u} ({d}): {content.get_text(strip=True)}")
+                if tweets:
+                    return '\n\n'.join(tweets)
+            except Exception:
+                continue
+    # Fallback: DDG site:x.com search
+    try:
+        results = await asyncio.wait_for(
+            asyncio.to_thread(lambda: list(DDGS(timeout=10).text(f"site:x.com {query}", max_results=5))),
+            timeout=20,
+        )
+        if results:
+            return "\n\n".join(f"{r['title']}\n{r['href']}\n{r['body']}" for r in results)
+    except Exception:
+        pass
+    return "Could not retrieve Twitter results — all nitter instances unavailable and DDG fallback failed."
 
 
 @agent.tool_plain
