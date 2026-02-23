@@ -194,14 +194,17 @@ def _parse_twitter_results(data: dict) -> list[dict]:
                 if r.get("__typename") == "TweetWithVisibilityResults":
                     r = r.get("tweet", {})
                 legacy = r.get("legacy", {})
-                user = r.get("core", {}).get("user_results", {}).get("result", {}).get("legacy", {})
+                user_result = r.get("core", {}).get("user_results", {}).get("result", {})
+                # screen_name moved to result.core in newer Twitter API responses
+                user_core = user_result.get("core", {})
+                screen_name = user_core.get("screen_name") or user_result.get("legacy", {}).get("screen_name", "unknown")
                 text = legacy.get("full_text", "")
                 if text:
                     tweets.append({
-                        "screen_name": user.get("screen_name", "unknown"),
+                        "screen_name": screen_name,
                         "text": text,
                         "created_at": legacy.get("created_at", ""),
-                        "url": f"https://x.com/{user.get('screen_name', 'i')}/status/{legacy.get('id_str', '')}",
+                        "url": f"https://x.com/{screen_name}/status/{legacy.get('id_str', '')}",
                     })
     except Exception:
         pass
