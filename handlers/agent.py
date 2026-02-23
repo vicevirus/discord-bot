@@ -482,10 +482,16 @@ def strip_tables(text: str) -> str:
     return "\n".join(result)
 
 
-def _is_provider_400(exc: Exception) -> bool:
-    """True if the exception is a Bonsai/Anthropic 400 provider error."""
+def _is_transient_provider_error(exc: Exception) -> bool:
+    """True for intermittent Bonsai backend failures that should be retried as-is."""
     s = str(exc).lower()
-    return "400" in s or "provider returned error" in s or "bad_request" in s
+    return "provider returned error" in s or "overloaded" in s or "529" in s
+
+
+def _is_context_400(exc: Exception) -> bool:
+    """True for 400s caused by bad/oversized history — retry with trimmed history."""
+    s = str(exc).lower()
+    return ("400" in s or "bad_request" in s) and "provider returned error" not in s
 
 
 async def stream_agent_message(channel_id: int, user_message: str):
@@ -553,15 +559,24 @@ async def stream_agent_message(channel_id: int, user_message: str):
             new_msgs = await _run_once(_history[channel_id])
             _history[channel_id].extend(new_msgs)
         except Exception as exc:
-            if _is_provider_400(exc):
-                # Trim history and retry once — clears whatever caused the 400
+            if _is_transient_provider_error(exc):
+                # Bonsai backend blip — wait a moment and retry with same history
+                print(f'[kuro] transient provider error, retrying: {exc}', flush=True)
+                await asyncio.sleep(3)
+                try:
+                    new_msgs = await _run_once(_history[channel_id])
+                    _history[channel_id].extend(new_msgs)
+                except Exception as exc2:
+                    await queue.put(exc2)
+            elif _is_context_400(exc):
+                # Bad/oversized context — trim history and retry once
+                print(f'[kuro] context 400, trimming history and retrying: {exc}', flush=True)
                 kept = _history[channel_id][-AGENT_KEEP_RECENT:]
                 _history[channel_id] = kept
                 try:
                     new_msgs = await _run_once(_history[channel_id])
                     _history[channel_id].extend(new_msgs)
                 except Exception as exc2:
-                    # Still failing — clear history entirely so next turn is clean
                     _history[channel_id] = []
                     await queue.put(exc2)
             else:
