@@ -128,7 +128,14 @@ agent = Agent(
 @agent.system_prompt
 def _current_date() -> str:
     my_time = datetime.now(timezone(timedelta(hours=8)))
-    return f"Current date and time (Malaysia, UTC+8): {my_time.strftime('%B %d, %Y %H:%M')}."
+    greg = f"{my_time.strftime('%B %d, %Y %H:%M')}"
+    try:
+        from hijridate import Gregorian
+        h = Gregorian(my_time.year, my_time.month, my_time.day).to_hijri()
+        hijri = f"{h.day} {h.month_name()} {h.year} AH"
+    except Exception:
+        hijri = "(hijri unavailable)"
+    return f"Current date and time (Malaysia, UTC+8): {greg}. Islamic date: {hijri}."
 
 
 @agent.system_prompt

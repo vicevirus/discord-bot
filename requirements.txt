@@ -9,5 +9,6 @@ anthropic
 ddgs
 httpx
 beautifulsoup4
+hijridate==2.3.0
 pytest
 pytest-asyncio
