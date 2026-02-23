@@ -357,7 +357,16 @@ async def on_message(message):
         and not message.author.bot
         and bot.user in message.mentions
     ):
-        user_input = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
+        raw_content = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
+        # Resolve all user mentions (<@ID>) to display names so the bot knows who was tagged
+        for mentioned_user in message.mentions:
+            if mentioned_user.id == bot.user.id:
+                continue
+            display = mentioned_user.display_name or mentioned_user.name
+            raw_content = raw_content.replace(f'<@{mentioned_user.id}>', f'@{display}')
+            raw_content = raw_content.replace(f'<@!{mentioned_user.id}>', f'@{display}')
+        sender_name = message.author.display_name or message.author.name
+        user_input = f'[{sender_name}]: {raw_content}' if raw_content else ''
         attachment_text = await read_txt_attachments(message)
         if attachment_text:
             user_input = (user_input + '\n\n' + attachment_text).strip()
