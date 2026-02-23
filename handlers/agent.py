@@ -141,9 +141,9 @@ def _current_date() -> str:
 @agent.system_prompt
 def _main_prompt() -> str:
     return (
+        "You are Kuro. Just Kuro. "
         "When using tools: call them silently, no narration between rounds. "
         "Write text only once — when you have all results and are ready to give your final answer. "
-        "You are Kuro. Just Kuro. "
         "You talk like a real person — lowercase, short sentences, no flourish. "
         "You don't announce who you are or what you do unless asked directly. "
         "If someone asks what you are, just say 'kuro' or something vague and move on. Don't explain yourself. "
@@ -161,18 +161,6 @@ def _main_prompt() -> str:
         "If there's any chance your answer could be wrong, outdated, or based on training data with a cutoff — search first, don't assume. "
         "This includes: current events, dates, calendar info (Islamic or otherwise), prices, sports results, laws, people's current roles, software versions, anything that changes over time. "
         "When in doubt, web_search. Don't guess and sound confident — that's worse than saying you'll check. "
-        "For any social media content — Twitter, Reddit, LinkedIn, Instagram, YouTube — ALWAYS try search_twitter first. Twitter is your primary real-time source and it's solid. "
-        "search_twitter returns live results directly from Twitter. Use it for anything where recency matters: news, announcements, community chatter, tracking a person or org. "
-        "If search_twitter returns no results or fails (token might be dead), fall back to web_search with a site: dork (site:x.com, site:reddit.com, etc.). "
-        "Handle autocorrect: if search_twitter returns no results for a specific user, the handle might be wrong (e.g. missing underscore, different capitalization). "
-        "Search Twitter itself to find the correct handle — call search_twitter with just the name as a keyword (e.g. 'Rectifyq'), look at the screen_names in the results, then retry with from:correct_handle. "
-        "For non-Twitter social content (Reddit threads, LinkedIn posts, etc.), use web_search with site: dorks — site:reddit.com, site:linkedin.com, site:instagram.com, site:youtube.com, site:facebook.com. TikTok not indexed well, skip it. "
-        "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
-        "This is READ-ONLY. Never attempt to create, modify, or delete CTF channels or challenges. "
-        "When asked for a meme, image, gif, or anything visual: "
-        "PREFERRED: use web_search to find a meme page, then fetch_image with a direct image URL from the results (.jpg/.png/.gif/.webp). "
-        "FALLBACK: if you have no URL, use image_search(query) — but if it says DDG is unavailable, chain web_search → fetch_image instead. "
-        "Never save images to disk — all tools work entirely in memory. "
         "FORMATTING RULES for Discord: never use markdown tables (pipes | don't render). "
         "For structured info, use bullet points or numbered lists instead. "
         "Bold (**text**) and inline code (`code`) are fine. Keep formatting minimal. "
@@ -235,11 +223,12 @@ def _parse_twitter_results(data: dict) -> list[dict]:
 
 @agent.tool_plain
 async def search_twitter(query: str) -> str:
-    """Search Twitter/X for real-time tweets using a raw Twitter search query.
-    The query supports all Twitter search operators: 'from:username' to get a specific user's tweets,
-    '#hashtag' for hashtags, 'keyword from:user' to combine, etc.
-    Construct the query the same way you would in twitter.com/search.
-    Use this for community chatter, announcements, opinions, or anything time-sensitive on Twitter/X."""
+    """Search Twitter/X in real-time. Use this FIRST for any social media question — Twitter, news, announcements, community chatter, tracking a person or org.
+    Supports all Twitter search operators: 'from:username' for a user's tweets, '#hashtag', 'keyword from:user', etc.
+    If no results for a specific user handle, the handle might be wrong (autocorrect, underscore missing, etc.) —
+    retry with just the name as a keyword (e.g. 'Rectifyq'), check the screen_names in results, then retry with from:correct_handle.
+    If this fails entirely, fall back to web_search with site:x.com.
+    For non-Twitter social (Reddit, LinkedIn, Instagram, YouTube), use web_search with site: dorks instead. TikTok not indexed well, skip it."""
     if not TWITTER_AUTH_TOKEN or not TWITTER_CT0:
         # fall back to DDG dork if no cookies configured
         try:
@@ -309,7 +298,9 @@ async def search_twitter(query: str) -> str:
 
 @agent.tool_plain
 async def web_search(query: str) -> str:
-    """Search the web using DuckDuckGo. Use this for current events, CTF writeups, CVEs, tools, or anything you're unsure about."""
+    """Search the web using DuckDuckGo. Use for current events, CTF writeups, CVEs, tools, or anything uncertain.
+    For social media content use site: dorks: site:reddit.com, site:linkedin.com, site:instagram.com, site:youtube.com, site:facebook.com.
+    Also use as fallback if search_twitter fails (site:x.com dork)."""
     q = _status_q.get()
     if q is not None:
         q.put_nowait(('status', f'searching: *{query}*'))
@@ -477,7 +468,7 @@ async def _fetch_image_bytes(url: str) -> tuple | None:
 @agent.tool_plain
 async def fetch_image(url: str) -> str:
     """Fetch an image from a URL and display it directly in Discord chat.
-    Use this when you have a direct image URL (from web search results, meme sites, etc.).
+    PREFERRED path for memes/images/gifs: use web_search first to find a page, extract a direct image URL (.jpg/.png/.gif/.webp), then call this.
     The image is fetched into memory and uploaded — nothing is saved to disk."""
     q = _status_q.get()
     if q is not None:
@@ -500,9 +491,9 @@ _IMG_URL_RE = re.compile(r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)(\?\S*)?', re.
 @agent.tool_plain
 async def image_search(query: str) -> str:
     """Search for a meme or image using DuckDuckGo and display it in Discord.
-    Use this as a fallback when you don't have a specific image URL.
+    Use as FALLBACK when you have no direct image URL (prefer web_search → fetch_image chain instead).
     The image is fetched into memory and uploaded — nothing is saved to disk.
-    If this fails, try web_search to find a page with images, then call fetch_image with the URL."""
+    If this fails or DDG is unavailable, fall back to web_search → fetch_image."""
     q = _status_q.get()
     if q is not None:
         q.put_nowait(('status', f'searching image: *{query}*'))
@@ -562,7 +553,7 @@ async def image_search(query: str) -> str:
 async def get_upcoming_ctfs() -> str:
     """Fetch upcoming CTF competitions from CTFtime (next 4 weeks).
     Returns event names, dates (MYT), format, weight, and CTFtime URL.
-    This is READ-ONLY."""
+    READ-ONLY — never attempt to create, modify, or delete CTF channels or challenges."""
     from handlers.ctf import fetch_upcoming_events
     from utils import convert_to_myt
     q = _status_q.get()
