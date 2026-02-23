@@ -366,7 +366,7 @@ async def on_message(message):
             raw_content = raw_content.replace(f'<@{mentioned_user.id}>', f'@{display}')
             raw_content = raw_content.replace(f'<@!{mentioned_user.id}>', f'@{display}')
         sender_name = message.author.display_name or message.author.name
-        user_input = f'[{sender_name}]: {raw_content}' if raw_content else ''
+        user_input = f'<sender>{sender_name}</sender> {raw_content}' if raw_content else ''
         attachment_text = await read_txt_attachments(message)
         if attachment_text:
             user_input = (user_input + '\n\n' + attachment_text).strip()
