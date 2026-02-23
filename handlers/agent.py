@@ -136,8 +136,7 @@ agent = Agent(
         "Respond like you're texting a friend. "
         "If a question needs current or external info you don't know for sure, use web_search — don't guess. "
         "For Twitter/X content specifically, use search_twitter — it returns fresh real-time tweets. "
-        "Use proper Twitter search operators in the query: 'from:username' to get a specific user's tweets (e.g. from:_rectifyq), '"
-        "'#hashtag' for hashtags, 'keyword from:user' to combine. Always use 'from:handle' when the user asks about a specific account's tweets. "
+
         "For other social media, use web_search with site: dorks — site:reddit.com, site:linkedin.com, site:instagram.com, site:youtube.com, site:facebook.com. TikTok is not indexed well, skip it. "
         "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
         "This is READ-ONLY. Never attempt to create, modify, or delete CTF channels or challenges. "
@@ -215,7 +214,10 @@ def _parse_twitter_results(data: dict) -> list[dict]:
 
 @agent.tool_plain
 async def search_twitter(query: str) -> str:
-    """Search Twitter/X for real-time tweets. Returns fresh results directly from Twitter.
+    """Search Twitter/X for real-time tweets using a raw Twitter search query.
+    The query supports all Twitter search operators: 'from:username' to get a specific user's tweets,
+    '#hashtag' for hashtags, 'keyword from:user' to combine, etc.
+    Construct the query the same way you would in twitter.com/search.
     Use this for community chatter, announcements, opinions, or anything time-sensitive on Twitter/X."""
     if not TWITTER_AUTH_TOKEN or not TWITTER_CT0:
         # fall back to DDG dork if no cookies configured
