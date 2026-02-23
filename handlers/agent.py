@@ -160,52 +160,25 @@ def _current_date() -> str:
     return f"Current date and time (Malaysia, UTC+8): {my_time.strftime('%B %d, %Y %H:%M')}."
 
 
-_NITTER_INSTANCES = [
-    "https://xcancel.com",
-    "https://nitter.privacyredirect.com",
-    "https://nitter.poast.org",
-]
-
 @agent.tool_plain
 async def search_twitter(query: str) -> str:
-    """Search Twitter/X posts via nitter (no login required). Use this for social media opinions, community chatter, announcements."""
+    """Search Twitter/X posts via DuckDuckGo site search. Use this for social media opinions, community chatter, announcements from Twitter/X."""
     q = _status_q.get()
     if q is not None:
         q.put_nowait(('status', f'searching twitter: *{query}*'))
         await asyncio.sleep(0)
-    encoded = query.replace(' ', '+')
-    async with httpx.AsyncClient(headers=_BROWSER_HEADERS, follow_redirects=True, timeout=15) as client:
-        for base in _NITTER_INSTANCES:
-            try:
-                url = f"{base}/search?q={encoded}&f=tweets"
-                resp = await client.get(url)
-                if resp.status_code != 200:
-                    continue
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                tweets = []
-                for item in soup.select('.timeline-item')[:10]:
-                    user = item.select_one('.username')
-                    content = item.select_one('.tweet-content')
-                    date = item.select_one('.tweet-date a')
-                    if content:
-                        u = user.get_text(strip=True) if user else 'unknown'
-                        d = date['title'] if date and date.get('title') else ''
-                        tweets.append(f"{u} ({d}): {content.get_text(strip=True)}")
-                if tweets:
-                    return '\n\n'.join(tweets)
-            except Exception:
-                continue
-    # Fallback: DDG site:x.com search
     try:
         results = await asyncio.wait_for(
-            asyncio.to_thread(lambda: list(DDGS(timeout=10).text(f"site:x.com {query}", max_results=5))),
+            asyncio.to_thread(lambda: list(DDGS(timeout=10).text(f"site:x.com {query}", max_results=8))),
             timeout=20,
         )
         if results:
             return "\n\n".join(f"{r['title']}\n{r['href']}\n{r['body']}" for r in results)
-    except Exception:
-        pass
-    return "Could not retrieve Twitter results — all nitter instances unavailable and DDG fallback failed."
+        return "No Twitter/X results found."
+    except asyncio.TimeoutError:
+        return "Search timed out."
+    except Exception as e:
+        return f"Search failed: {e}"
 
 
 @agent.tool_plain
