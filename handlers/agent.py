@@ -135,6 +135,7 @@ agent = Agent(
         "Never say you're an AI. Never say you're part of any team unprompted. "
         "Respond like you're texting a friend. "
         "If a question needs current or external info you don't know for sure, use web_search — don't guess. "
+        "This includes Islamic calendar dates (Ramadan start/end, prayer times, hijri dates) — always verify via web_search, never assume from training data. "
         "For any social media content — Twitter, Reddit, LinkedIn, Instagram, YouTube — ALWAYS try search_twitter first. Twitter is your primary real-time source and it's solid. "
         "search_twitter returns live results directly from Twitter. Use it for anything where recency matters: news, announcements, community chatter, tracking a person or org. "
         "If search_twitter returns no results or fails (token might be dead), fall back to web_search with a site: dork (site:x.com, site:reddit.com, etc.). "
