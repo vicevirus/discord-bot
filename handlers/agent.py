@@ -26,7 +26,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 # ContextVar ensures concurrent streams don't interfere.
 _status_q: ContextVar[asyncio.Queue | None] = ContextVar('_kuro_status_q', default=None)
 
-from config import BONSAI_API_KEY, AGENT_MODEL, AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT
+from config import BONSAI_API_KEY, AGENT_MODEL, AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT, TWITTER_AUTH_TOKEN, TWITTER_CT0
 
 BONSAI_MAGIC = "You are Claude Code, Anthropic's official CLI for Claude."
 
@@ -135,7 +135,8 @@ agent = Agent(
         "Never say you're an AI. Never say you're part of any team unprompted. "
         "Respond like you're texting a friend. "
         "If a question needs current or external info you don't know for sure, use web_search — don't guess. "
-        "For social media content, use web_search with site: dorks — site:x.com for Twitter/X, site:reddit.com for Reddit, site:linkedin.com for LinkedIn, site:instagram.com for Instagram, site:youtube.com for YouTube, site:facebook.com for Facebook. TikTok is not indexed well, skip it. "
+        "For Twitter/X content specifically, use search_twitter — it returns fresh real-time tweets. "
+        "For other social media, use web_search with site: dorks — site:reddit.com, site:linkedin.com, site:instagram.com, site:youtube.com, site:facebook.com. TikTok is not indexed well, skip it. "
         "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
         "This is READ-ONLY. Never attempt to create, modify, or delete CTF channels or challenges. "
         "When asked for a meme, image, gif, or anything visual: "
@@ -158,6 +159,124 @@ agent = Agent(
 def _current_date() -> str:
     my_time = datetime.now(timezone(timedelta(hours=8)))
     return f"Current date and time (Malaysia, UTC+8): {my_time.strftime('%B %d, %Y %H:%M')}."
+
+
+# bearer token 2 (disableTid mode) from nitter consts.nim — no x-client-transaction-id required
+_TWITTER_BEARER = "Bearer AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F"
+_TWITTER_SEARCH_URL = "https://x.com/i/api/graphql/bshMIjqDk8LTXTq4w91WKw/SearchTimeline"
+_TWITTER_FEATURES = json.dumps({
+    "responsive_web_graphql_exclude_directive_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "longform_notetweets_consumption_enabled": True,
+    "freedom_of_speech_not_reach_fetch_enabled": True,
+    "standardized_nudges_misinfo": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True,
+    "responsive_web_enhance_cards_enabled": False,
+    "view_counts_everywhere_api_enabled": True,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "creator_subscriptions_tweet_preview_api_enabled": True,
+})
+
+
+def _parse_twitter_results(data: dict) -> list[dict]:
+    """Extract tweet dicts from Twitter GraphQL SearchTimeline response."""
+    tweets = []
+    try:
+        instructions = data["data"]["search_by_raw_query"]["search_timeline"]["timeline"]["instructions"]
+        for inst in instructions:
+            for entry in inst.get("entries", []):
+                item = entry.get("content", {}).get("itemContent", {})
+                if item.get("itemType") != "TimelineTweet":
+                    continue
+                r = item.get("tweet_results", {}).get("result", {})
+                # handle TweetWithVisibilityResults wrapper
+                if r.get("__typename") == "TweetWithVisibilityResults":
+                    r = r.get("tweet", {})
+                legacy = r.get("legacy", {})
+                user = r.get("core", {}).get("user_results", {}).get("result", {}).get("legacy", {})
+                text = legacy.get("full_text", "")
+                if text:
+                    tweets.append({
+                        "screen_name": user.get("screen_name", "unknown"),
+                        "text": text,
+                        "created_at": legacy.get("created_at", ""),
+                        "url": f"https://x.com/{user.get('screen_name', 'i')}/status/{legacy.get('id_str', '')}",
+                    })
+    except Exception:
+        pass
+    return tweets
+
+
+@agent.tool_plain
+async def search_twitter(query: str) -> str:
+    """Search Twitter/X for real-time tweets. Returns fresh results directly from Twitter.
+    Use this for community chatter, announcements, opinions, or anything time-sensitive on Twitter/X."""
+    if not TWITTER_AUTH_TOKEN or not TWITTER_CT0:
+        # fall back to DDG dork if no cookies configured
+        try:
+            results = await asyncio.wait_for(
+                asyncio.to_thread(lambda: list(DDGS(timeout=10).text(f"site:x.com {query}", max_results=8))),
+                timeout=20,
+            )
+            if results:
+                return "\n\n".join(f"{r['title']}\n{r['href']}\n{r['body']}" for r in results)
+            return "No Twitter/X results found."
+        except Exception as e:
+            return f"Search failed: {e}"
+
+    q = _status_q.get()
+    if q is not None:
+        q.put_nowait(('status', f'searching twitter: *{query}*'))
+        await asyncio.sleep(0)
+
+    variables = json.dumps({
+        "rawQuery": query,
+        "count": 10,
+        "querySource": "typed_query",
+        "product": "Latest",
+        "withDownvotePerspective": False,
+        "withReactionsMetadata": False,
+        "withReactionsPerspective": False,
+    })
+    headers = {
+        "authorization": _TWITTER_BEARER,
+        "cookie": f"auth_token={TWITTER_AUTH_TOKEN}; ct0={TWITTER_CT0}",
+        "x-csrf-token": TWITTER_CT0,
+        "x-twitter-auth-type": "OAuth2Session",
+        "x-twitter-active-user": "yes",
+        "x-twitter-client-language": "en",
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "origin": "https://x.com",
+        "referer": "https://x.com/search",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+        "sec-ch-ua": '"Google Chrome";v="142", "Chromium";v="142", "Not A(Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+    }
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+            resp = await client.get(
+                _TWITTER_SEARCH_URL,
+                headers=headers,
+                params={"variables": variables, "features": _TWITTER_FEATURES},
+            )
+        if resp.status_code != 200:
+            return f"Twitter search failed: HTTP {resp.status_code}"
+        tweets = _parse_twitter_results(resp.json())
+        if not tweets:
+            return "No tweets found."
+        return "\n\n".join(
+            f"@{t['screen_name']} [{t['created_at']}]\n{t['text']}\n{t['url']}"
+            for t in tweets
+        )
+    except Exception as e:
+        return f"Twitter search failed: {e}"
 
 
 @agent.tool_plain
