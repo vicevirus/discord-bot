@@ -135,7 +135,7 @@ agent = Agent(
         "Never say you're an AI. Never say you're part of any team unprompted. "
         "Respond like you're texting a friend. "
         "If a question needs current or external info you don't know for sure, use web_search — don't guess. "
-        "For Twitter/X content specifically, use search_twitter which searches via nitter (no login needed). "
+        "For Twitter/X content, use web_search with a site:x.com dork (e.g. site:x.com <topic>). "
         "You also have access to CTFtime: use get_upcoming_ctfs to fetch upcoming public CTF competitions from ctftime.org. "
         "This is READ-ONLY. Never attempt to create, modify, or delete CTF channels or challenges. "
         "When asked for a meme, image, gif, or anything visual: "
@@ -158,27 +158,6 @@ agent = Agent(
 def _current_date() -> str:
     my_time = datetime.now(timezone(timedelta(hours=8)))
     return f"Current date and time (Malaysia, UTC+8): {my_time.strftime('%B %d, %Y %H:%M')}."
-
-
-@agent.tool_plain
-async def search_twitter(query: str) -> str:
-    """Search Twitter/X posts via DuckDuckGo site search. Use this for social media opinions, community chatter, announcements from Twitter/X."""
-    q = _status_q.get()
-    if q is not None:
-        q.put_nowait(('status', f'searching twitter: *{query}*'))
-        await asyncio.sleep(0)
-    try:
-        results = await asyncio.wait_for(
-            asyncio.to_thread(lambda: list(DDGS(timeout=10).text(f"site:x.com {query}", max_results=8))),
-            timeout=20,
-        )
-        if results:
-            return "\n\n".join(f"{r['title']}\n{r['href']}\n{r['body']}" for r in results)
-        return "No Twitter/X results found."
-    except asyncio.TimeoutError:
-        return "Search timed out."
-    except Exception as e:
-        return f"Search failed: {e}"
 
 
 @agent.tool_plain
