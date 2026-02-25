@@ -337,6 +337,14 @@ async def slash_delwriteups(interaction: discord.Interaction, username: str):
 # =============================================================================
 
 @bot.event
+async def on_message_edit(before, after):
+    """Re-dispatch edited messages that newly mention the bot."""
+    was_mentioned = bot.user in before.mentions
+    now_mentioned = bot.user in after.mentions
+    if not was_mentioned and now_mentioned:
+        await on_message(after)
+
+@bot.event
 async def on_message(message):
     """Main message handler for all prefix commands."""
     current_year = get_current_year()
