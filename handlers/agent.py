@@ -676,23 +676,27 @@ async def stream_agent_message(channel_id: int, user_message: str):
             _history[channel_id].extend(new_msgs)
         except Exception as exc:
             if _is_transient_provider_error(exc):
-                # Rate-limit / overload — retry with exponential backoff
-                for attempt in range(1, 4):
-                    wait = 3 * (2 ** (attempt - 1))  # 3s, 6s, 12s
-                    print(f'[kuro] transient error (attempt {attempt}/3), waiting {wait}s: {exc}', flush=True)
+                # Rate-limit / overload — keep retrying with capped backoff until it works
+                MAX_TOTAL = 120  # give up after 2 min total
+                attempt = 0
+                elapsed = 0.0
+                while elapsed < MAX_TOTAL:
+                    attempt += 1
+                    wait = min(5 * (2 ** (attempt - 1)), 30)  # 5s, 10s, 20s, 30s cap
+                    print(f'[kuro] rate limited (attempt {attempt}), waiting {wait}s: {exc}', flush=True)
                     await queue.put(('status', f'rate limited, retrying in {wait}s...'))
                     await asyncio.sleep(wait)
+                    elapsed += wait
                     try:
                         new_msgs = await _run_once(_history[channel_id])
                         _history[channel_id].extend(new_msgs)
                         break
                     except Exception as exc2:
                         exc = exc2
-                        if attempt == 3:
-                            await queue.put(('status', ''))
-                            await queue.put(('text', 'rate limited rn, try again in a bit'))
                 else:
-                    pass  # exhausted retries — friendly msg already queued
+                    # truly exhausted — 2 min of retries
+                    await queue.put(('status', ''))
+                    await queue.put(('text', 'been rate limited for 2 min straight, try again later'))
             elif _is_context_400(exc):
                 # Bad/oversized context — trim history and retry once
                 print(f'[kuro] context 400, trimming history and retrying: {exc}', flush=True)
