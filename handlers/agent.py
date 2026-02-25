@@ -5,8 +5,8 @@ import json
 import re
 
 import asyncio
-import anthropic
 import httpx
+import openai
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from pydantic_ai import (
@@ -19,56 +19,32 @@ from pydantic_ai import (
     TextPartDelta,
 )
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.models.openai import OpenAIModel, OpenAIModelSettings
+from pydantic_ai.providers.openai import OpenAIProvider
 
 # Holds the active stream's queue so async tools can push status events into it.
 # ContextVar ensures concurrent streams don't interfere.
 _status_q: ContextVar[asyncio.Queue | None] = ContextVar('_kuro_status_q', default=None)
 
-from config import BONSAI_API_KEY, AGENT_MODEL, AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT, TWITTER_AUTH_TOKEN, TWITTER_CT0
-
-BONSAI_MAGIC = "You are Claude Code, Anthropic's official CLI for Claude."
-
-
-class _BonsaiTransport(httpx.AsyncHTTPTransport):
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        if request.method not in ("POST", b"POST") or b"/messages" not in request.url.raw_path:
-            return await super().handle_async_request(request)
-        body = json.loads(request.content)
-        sys = body.get("system", "")
-        extra = ([{"type": "text", "text": sys}] if isinstance(sys, str) and sys
-                 else sys if isinstance(sys, list) else [])
-        body["system"] = [{"type": "text", "text": BONSAI_MAGIC}] + extra
-        body.pop("tool_choice", None)
-        body["stream"] = True
-        raw = json.dumps(body).encode()
-        return await super().handle_async_request(httpx.Request(
-            method=request.method, url=request.url,
-            headers=[(k, v) for k, v in request.headers.raw if k.lower() != b"content-length"]
-                    + [(b"content-length", str(len(raw)).encode())],
-            content=raw,
-        ))
+from config import OPENROUTER_API_KEY, AGENT_MODEL, AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT, TWITTER_AUTH_TOKEN, TWITTER_CT0
 
 
 def _make_provider():
-    return AnthropicProvider(anthropic_client=anthropic.AsyncAnthropic(
-        auth_token=BONSAI_API_KEY,
-        base_url="https://go.trybons.ai",
-        http_client=httpx.AsyncClient(transport=_BonsaiTransport()),
+    return OpenAIProvider(openai_client=openai.AsyncOpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url="https://openrouter.ai/api/v1",
     ))
 
 
 def _model():
-    return AnthropicModel(
+    return OpenAIModel(
         AGENT_MODEL,
         provider=_make_provider(),
     )
 
 
-_MODEL_SETTINGS = AnthropicModelSettings(
+_MODEL_SETTINGS = OpenAIModelSettings(
     max_tokens=4096,
-    extra_headers={"User-Agent": "claude-cli/2.1.50 (external, cli)"}
 )
 
 _BROWSER_HEADERS = {

@@ -4,8 +4,8 @@ Pillow
 aiohttp
 requests
 dotenv
-pydantic-ai-slim[anthropic]
-anthropic
+pydantic-ai-slim[openai]
+openai
 ddgs
 httpx
 beautifulsoup4

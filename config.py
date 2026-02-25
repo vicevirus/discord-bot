@@ -32,8 +32,8 @@ OWNER_DISCORD_ID = int(os.getenv("OWNER_DISCORD_ID", "0"))
 # AI AGENT
 # =============================================================================
 
-BONSAI_API_KEY = os.getenv("BONSAI_API_KEY")
-AGENT_MODEL = "claude-opus-4-6"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+AGENT_MODEL = "openai/gpt-oss-120b:free"
 AGENT_SUMMARIZE_AFTER = 100
 AGENT_KEEP_RECENT = 10
 
