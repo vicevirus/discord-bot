@@ -9,6 +9,8 @@ import httpx
 import openai
 from bs4 import BeautifulSoup
 from ddgs import DDGS
+from httpx import AsyncClient, HTTPStatusError
+from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 from pydantic_ai import (
     Agent,
     FinalResultEvent,
@@ -21,6 +23,7 @@ from pydantic_ai import (
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.openai import OpenAIModel, OpenAIModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
 # Holds the active stream's queue so async tools can push status events into it.
 # ContextVar ensures concurrent streams don't interfere.
@@ -29,11 +32,40 @@ _status_q: ContextVar[asyncio.Queue | None] = ContextVar('_kuro_status_q', defau
 from config import OPENROUTER_API_KEY, AGENT_MODEL, AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT, TWITTER_AUTH_TOKEN, TWITTER_CT0
 
 
+def _make_retrying_client() -> AsyncClient:
+    """Create an httpx client with transport-level retry for 429/5xx errors.
+
+    Retries respect Retry-After headers from OpenRouter and fall back to
+    exponential backoff (1s * 2^n, capped at 60s).  Up to 10 attempts total
+    over a max wait of 5 min per individual HTTP request.
+    """
+    def _should_retry(response):
+        if response.status_code in (429, 502, 503, 504):
+            response.raise_for_status()
+
+    transport = AsyncTenacityTransport(
+        config=RetryConfig(
+            retry=retry_if_exception_type((HTTPStatusError, ConnectionError)),
+            wait=wait_retry_after(
+                fallback_strategy=wait_exponential(multiplier=1, max=60),
+                max_wait=300,
+            ),
+            stop=stop_after_attempt(10),
+            reraise=True,
+        ),
+        validate_response=_should_retry,
+    )
+    return AsyncClient(transport=transport)
+
+
 def _make_provider():
-    return OpenAIProvider(openai_client=openai.AsyncOpenAI(
-        api_key=OPENROUTER_API_KEY,
-        base_url="https://openrouter.ai/api/v1",
-    ))
+    return OpenAIProvider(
+        openai_client=openai.AsyncOpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+            http_client=_make_retrying_client(),
+        ),
+    )
 
 
 def _model():
@@ -597,13 +629,6 @@ def strip_tables(text: str) -> str:
     return "\n".join(result)
 
 
-def _is_transient_provider_error(exc: Exception) -> bool:
-    """True for intermittent provider failures (rate-limit, overload) that should be retried."""
-    s = str(exc).lower()
-    return ("provider returned error" in s or "overloaded" in s
-            or "529" in s or "429" in s or "rate" in s)
-
-
 def _is_context_400(exc: Exception) -> bool:
     """True for 400s caused by bad/oversized history — retry with trimmed history."""
     s = str(exc).lower()
@@ -675,29 +700,7 @@ async def stream_agent_message(channel_id: int, user_message: str):
             new_msgs = await _run_once(_history[channel_id])
             _history[channel_id].extend(new_msgs)
         except Exception as exc:
-            if _is_transient_provider_error(exc):
-                # Rate-limit / overload — keep retrying with capped backoff until it works
-                MAX_TOTAL = 120  # give up after 2 min total
-                attempt = 0
-                elapsed = 0.0
-                while elapsed < MAX_TOTAL:
-                    attempt += 1
-                    wait = min(5 * (2 ** (attempt - 1)), 30)  # 5s, 10s, 20s, 30s cap
-                    print(f'[kuro] rate limited (attempt {attempt}), waiting {wait}s: {exc}', flush=True)
-                    await queue.put(('status', f'rate limited, retrying in {wait}s...'))
-                    await asyncio.sleep(wait)
-                    elapsed += wait
-                    try:
-                        new_msgs = await _run_once(_history[channel_id])
-                        _history[channel_id].extend(new_msgs)
-                        break
-                    except Exception as exc2:
-                        exc = exc2
-                else:
-                    # truly exhausted — 2 min of retries
-                    await queue.put(('status', ''))
-                    await queue.put(('text', 'been rate limited for 2 min straight, try again later'))
-            elif _is_context_400(exc):
+            if _is_context_400(exc):
                 # Bad/oversized context — trim history and retry once
                 print(f'[kuro] context 400, trimming history and retrying: {exc}', flush=True)
                 kept = _history[channel_id][-AGENT_KEEP_RECENT:]

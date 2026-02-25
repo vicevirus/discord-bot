@@ -4,7 +4,7 @@ Pillow
 aiohttp
 requests
 dotenv
-pydantic-ai-slim[openai]
+pydantic-ai-slim[openai,retries]
 openai
 ddgs
 httpx
