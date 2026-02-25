@@ -619,13 +619,15 @@ def python_eval(expression: str) -> str:
     """
     import math as _math
     from simpleeval import simple_eval, EvalWithCompoundTypes
+    import simpleeval as _simpleeval
+    _simpleeval.MAX_COMPREHENSION_LENGTH = 100_000
 
     _functions = {
         # math basics
         "abs": abs, "round": round, "min": min, "max": max,
-        "sum": sum, "len": len, "sorted": sorted,
+        "sum": sum, "len": len, "sorted": sorted, "all": all, "any": any,
         "int": int, "float": float, "str": str, "bool": bool,
-        "range": range, "list": list, "tuple": tuple,
+        "range": range, "list": list, "tuple": tuple, "set": set, "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,
         # type conversions
         "hex": hex, "bin": bin, "oct": oct, "chr": chr, "ord": ord,
         # math module
