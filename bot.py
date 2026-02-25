@@ -415,7 +415,12 @@ async def on_message(message):
                                     pass
                                 last_edit = now
             except Exception as e:
-                await sent.edit(content=_fmt(f'error: {e}'), suppress=True)
+                err_str = str(e).lower()
+                if '429' in err_str or 'rate' in err_str:
+                    await sent.edit(content=_fmt('rate limited rn, try again in a bit'), suppress=True)
+                else:
+                    await sent.edit(content=_fmt('something went wrong, try again'), suppress=True)
+                    print(f'[kuro] unhandled error: {e}', flush=True)
                 return
 
             final = strip_tables(accumulated)

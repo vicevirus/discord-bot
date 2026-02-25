@@ -598,9 +598,10 @@ def strip_tables(text: str) -> str:
 
 
 def _is_transient_provider_error(exc: Exception) -> bool:
-    """True for intermittent Bonsai backend failures that should be retried as-is."""
+    """True for intermittent provider failures (rate-limit, overload) that should be retried."""
     s = str(exc).lower()
-    return "provider returned error" in s or "overloaded" in s or "529" in s
+    return ("provider returned error" in s or "overloaded" in s
+            or "529" in s or "429" in s or "rate" in s)
 
 
 def _is_context_400(exc: Exception) -> bool:
@@ -675,14 +676,23 @@ async def stream_agent_message(channel_id: int, user_message: str):
             _history[channel_id].extend(new_msgs)
         except Exception as exc:
             if _is_transient_provider_error(exc):
-                # Bonsai backend blip — wait a moment and retry with same history
-                print(f'[kuro] transient provider error, retrying: {exc}', flush=True)
-                await asyncio.sleep(3)
-                try:
-                    new_msgs = await _run_once(_history[channel_id])
-                    _history[channel_id].extend(new_msgs)
-                except Exception as exc2:
-                    await queue.put(exc2)
+                # Rate-limit / overload — retry with exponential backoff
+                for attempt in range(1, 4):
+                    wait = 3 * (2 ** (attempt - 1))  # 3s, 6s, 12s
+                    print(f'[kuro] transient error (attempt {attempt}/3), waiting {wait}s: {exc}', flush=True)
+                    await queue.put(('status', f'rate limited, retrying in {wait}s...'))
+                    await asyncio.sleep(wait)
+                    try:
+                        new_msgs = await _run_once(_history[channel_id])
+                        _history[channel_id].extend(new_msgs)
+                        break
+                    except Exception as exc2:
+                        exc = exc2
+                        if attempt == 3:
+                            await queue.put(('status', ''))
+                            await queue.put(('text', 'rate limited rn, try again in a bit'))
+                else:
+                    pass  # exhausted retries — friendly msg already queued
             elif _is_context_400(exc):
                 # Bad/oversized context — trim history and retry once
                 print(f'[kuro] context 400, trimming history and retrying: {exc}', flush=True)
