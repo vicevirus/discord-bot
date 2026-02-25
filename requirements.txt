@@ -10,5 +10,6 @@ ddgs
 httpx
 beautifulsoup4
 hijridate==2.3.0
+simpleeval
 pytest
 pytest-asyncio

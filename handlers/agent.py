@@ -594,6 +594,59 @@ async def get_upcoming_ctfs() -> str:
     return "\n\n".join(lines)
 
 
+@agent.tool_plain
+def python_eval(expression: str) -> str:
+    """Safely evaluate a Python math/crypto expression and return the exact result.
+    Use this for ANY arithmetic, conversions, or calculations that need precision.
+    You have access to the full `math` module and common CTF/crypto helpers.
+
+    Examples:
+      - '2 ** 64'
+      - 'sqrt(144) + abs(-5)'
+      - 'factorial(20)'
+      - '0xFF ^ 0xAB'
+      - 'hex(255)'
+      - 'bin(42)'
+      - 'int("deadbeef", 16)'
+      - 'gcd(48, 18)'
+      - 'log2(1024)'
+      - 'chr(65)'
+      - 'ord("A")'
+      - 'sum(range(1, 101))'
+      - 'pow(2, 128)'
+    """
+    import math as _math
+    from simpleeval import simple_eval, EvalWithCompoundTypes
+
+    _functions = {
+        # math basics
+        "abs": abs, "round": round, "min": min, "max": max,
+        "sum": sum, "len": len, "sorted": sorted,
+        "int": int, "float": float, "str": str, "bool": bool,
+        "range": range, "list": list, "tuple": tuple,
+        # type conversions
+        "hex": hex, "bin": bin, "oct": oct, "chr": chr, "ord": ord,
+        # math module
+        "sqrt": _math.sqrt, "pow": pow,
+        "ceil": _math.ceil, "floor": _math.floor,
+        "log": _math.log, "log2": _math.log2, "log10": _math.log10,
+        "sin": _math.sin, "cos": _math.cos, "tan": _math.tan,
+        "asin": _math.asin, "acos": _math.acos, "atan": _math.atan, "atan2": _math.atan2,
+        "radians": _math.radians, "degrees": _math.degrees,
+        "factorial": _math.factorial, "gcd": _math.gcd,
+        "comb": _math.comb, "perm": _math.perm,
+        "isqrt": _math.isqrt,
+        "pi": _math.pi, "e": _math.e, "tau": _math.tau, "inf": _math.inf,
+    }
+
+    try:
+        s = EvalWithCompoundTypes(functions=_functions, names=_functions)
+        result = s.eval(expression)
+        return str(result)
+    except Exception as e:
+        return f"eval error: {e}"
+
+
 def strip_tables(text: str) -> str:
     """Convert markdown tables to bullet lists so Discord renders them properly."""
     lines = text.split("\n")
