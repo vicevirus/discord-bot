@@ -414,10 +414,11 @@ async def _fetch_github(url: str, start: int) -> str | None:
 
 
 @agent.tool_plain
-async def fetch_page(url: str, start: int = 0) -> str:
+async def fetch_page(url: str, start: int = 0, extract_images: bool = False) -> str:
     """Fetch and read the content of a webpage. Use after web_search for full writeup/CVE details.
     GitHub URLs (tree/blob/repo) are handled via the GitHub API for clean output.
-    If the content is truncated, call again with start=8000 to get the next chunk, and so on."""
+    If the content is truncated, call again with start=8000 to get the next chunk, and so on.
+    Set extract_images=True to also return image URLs found on the page (useful for finding specific photos)."""
     q = _status_q.get()
     if q is not None:
         label = url.split('//')[-1][:60]
@@ -434,6 +435,32 @@ async def fetch_page(url: str, start: int = 0) -> str:
             resp = await client.get(url)
             resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
+        
+        # Extract image URLs if requested
+        image_urls = []
+        if extract_images:
+            for img in soup.find_all('img'):
+                src = img.get('src') or img.get('data-src') or img.get('data-lazy-src')
+                if src:
+                    # Make absolute URL
+                    if src.startswith('//'):
+                        src = 'https:' + src
+                    elif src.startswith('/'):
+                        from urllib.parse import urlparse
+                        parsed = urlparse(url)
+                        src = f"{parsed.scheme}://{parsed.netloc}{src}"
+                    if src.startswith('http') and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
+                        # Include alt text if available for context
+                        alt = img.get('alt', '').strip()
+                        if alt:
+                            image_urls.append(f"{src} (alt: {alt[:80]})")
+                        else:
+                            image_urls.append(src)
+            # Also check og:image meta tag (often has the main article image)
+            og_image = soup.find('meta', property='og:image')
+            if og_image and og_image.get('content'):
+                image_urls.insert(0, f"{og_image['content']} (og:image)")
+        
         for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
             tag.decompose()
         text = soup.get_text(separator="\n", strip=True)
@@ -442,6 +469,13 @@ async def fetch_page(url: str, start: int = 0) -> str:
             return "No more content at this offset."
         if start + 8000 < len(text):
             chunk += f"\n...[truncated — call fetch_page with start={start + 8000} for more]"
+        
+        # Append image URLs if found
+        if extract_images and image_urls:
+            unique_imgs = list(dict.fromkeys(image_urls))[:10]  # Dedupe, max 10
+            chunk += f"\n\n--- Images found on page ({len(unique_imgs)}) ---\n"
+            chunk += "\n".join(unique_imgs)
+        
         return chunk
     except Exception as e:
         return f"Failed to fetch page: {e}"
@@ -505,7 +539,10 @@ async def _fetch_image_bytes(url: str) -> tuple | None:
 @agent.tool_plain(retries=2)
 async def fetch_image(url: str) -> str:
     """Fetch an image from a URL and display it directly in Discord chat.
-    PREFERRED path for memes/images/gifs: use web_search first to find a page, extract a direct image URL (.jpg/.png/.gif/.webp), then call this.
+    PREFERRED workflow for finding specific photos:
+    1. web_search to find an article/page with the image
+    2. fetch_page(url, extract_images=True) to get image URLs from that page
+    3. fetch_image with the direct image URL (.jpg/.png/.gif/.webp)
     The image is fetched into memory and uploaded — nothing is saved to disk."""
     q = _status_q.get()
     if q is not None:
