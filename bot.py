@@ -408,8 +408,11 @@ async def on_message(message):
                             try:
                                 img_data, img_fname = data
                                 await message.channel.send(file=discord.File(io.BytesIO(img_data), filename=img_fname))
-                            except Exception:
-                                pass
+                            except Exception as img_err:
+                                try:
+                                    await message.channel.send(f"Failed to upload image: {img_err}")
+                                except Exception:
+                                    pass
                         elif kind == 'text':
                             accumulated += data
                             current_status = ''
@@ -501,8 +504,11 @@ async def on_message(message):
                                 try:
                                     img_data, img_fname = data
                                     await message.channel.send(file=discord.File(io.BytesIO(img_data), filename=img_fname))
-                                except Exception:
-                                    pass
+                                except Exception as img_err:
+                                    try:
+                                        await message.channel.send(f"Failed to upload image: {img_err}")
+                                    except Exception:
+                                        pass
                             elif kind == 'text':
                                 accumulated += data
                                 current_status = ''

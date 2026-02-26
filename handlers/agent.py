@@ -16,6 +16,7 @@ from pydantic_ai import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelRetry,
     PartDeltaEvent,
     PartStartEvent,
     TextPartDelta,
@@ -449,6 +450,28 @@ async def fetch_page(url: str, start: int = 0) -> str:
 _IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB
 
+# Magic bytes for common image formats
+_IMAGE_MAGIC = [
+    (b'\xff\xd8\xff', '.jpg'),       # JPEG
+    (b'\x89PNG\r\n\x1a\n', '.png'),  # PNG
+    (b'GIF87a', '.gif'),              # GIF87a
+    (b'GIF89a', '.gif'),              # GIF89a
+    (b'RIFF', '.webp'),               # WebP (starts with RIFF...WEBP)
+    (b'BM', '.bmp'),                  # BMP
+]
+
+
+def _validate_image_magic(data: bytes) -> str | None:
+    """Check if data starts with valid image magic bytes. Returns extension or None."""
+    for magic, ext in _IMAGE_MAGIC:
+        if data.startswith(magic):
+            # WebP needs additional check for WEBP signature at offset 8
+            if ext == '.webp' and len(data) >= 12:
+                if data[8:12] != b'WEBP':
+                    continue
+            return ext
+    return None
+
 
 async def _fetch_image_bytes(url: str) -> tuple | None:
     """Fetch image bytes from a URL into memory. Returns (data, filename) or None."""
@@ -462,11 +485,15 @@ async def _fetch_image_bytes(url: str) -> tuple | None:
             data = resp.content
             if len(data) > _MAX_IMAGE_BYTES:
                 return None
+            # Validate magic bytes to ensure it's actually an image
+            magic_ext = _validate_image_magic(data)
+            if magic_ext is None:
+                return None  # Not a valid image
             ext_map = {
                 'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif',
                 'image/webp': '.webp', 'image/bmp': '.bmp',
             }
-            ext = ext_map.get(ct, '.jpg')
+            ext = magic_ext or ext_map.get(ct, '.jpg')  # Prefer magic-detected extension
             fname = url.rstrip('/').split('/')[-1].split('?')[0] or f'image{ext}'
             if not any(fname.lower().endswith(e) for e in _IMAGE_EXTS):
                 fname = f'image{ext}'
@@ -475,7 +502,7 @@ async def _fetch_image_bytes(url: str) -> tuple | None:
             return None
 
 
-@agent.tool_plain
+@agent.tool_plain(retries=2)
 async def fetch_image(url: str) -> str:
     """Fetch an image from a URL and display it directly in Discord chat.
     PREFERRED path for memes/images/gifs: use web_search first to find a page, extract a direct image URL (.jpg/.png/.gif/.webp), then call this.
@@ -487,7 +514,7 @@ async def fetch_image(url: str) -> str:
         await asyncio.sleep(0)
     result = await _fetch_image_bytes(url)
     if result is None:
-        return f"Could not fetch a valid image from: {url}"
+        raise ModelRetry(f"Invalid or inaccessible image at {url}. Try a different direct image URL (.jpg/.png/.gif/.webp).")
     data, fname = result
     if q is not None:
         q.put_nowait(('image_file', (data, fname)))
