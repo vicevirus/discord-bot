@@ -220,12 +220,29 @@ def _parse_twitter_results(data: dict) -> list[dict]:
                 user_core = user_result.get("core", {})
                 screen_name = user_core.get("screen_name") or user_result.get("legacy", {}).get("screen_name", "unknown")
                 text = legacy.get("full_text", "")
+                
+                # Extract media URLs (photos, videos, gifs)
+                media_urls = []
+                ext_entities = legacy.get("extended_entities", {}) or legacy.get("entities", {})
+                for m in ext_entities.get("media", []):
+                    media_type = m.get("type", "")
+                    if media_type == "photo":
+                        media_urls.append(m.get("media_url_https", ""))
+                    elif media_type == "video" or media_type == "animated_gif":
+                        # Get highest bitrate video variant
+                        variants = m.get("video_info", {}).get("variants", [])
+                        mp4s = [v for v in variants if v.get("content_type") == "video/mp4"]
+                        if mp4s:
+                            best = max(mp4s, key=lambda v: v.get("bitrate", 0))
+                            media_urls.append(best.get("url", ""))
+                
                 if text:
                     tweets.append({
                         "screen_name": screen_name,
                         "text": text,
                         "created_at": legacy.get("created_at", ""),
                         "url": f"https://x.com/{screen_name}/status/{legacy.get('id_str', '')}",
+                        "media": [u for u in media_urls if u],
                     })
     except Exception:
         pass
@@ -236,6 +253,7 @@ def _parse_twitter_results(data: dict) -> list[dict]:
 async def search_twitter(query: str) -> str:
     """Search Twitter/X in real-time. Use this FIRST for any social media question — Twitter, news, announcements, community chatter, tracking a person or org.
     Supports all Twitter search operators: 'from:username' for a user's tweets, '#hashtag', 'keyword from:user', etc.
+    Returns tweet text, URL, and media URLs (photos/videos) if present — use fetch_image with the media URL to display images.
     If no results for a specific user handle, the handle might be wrong (autocorrect, underscore missing, etc.) —
     retry with just the name as a keyword (e.g. 'Rectifyq'), check the screen_names in results, then retry with from:correct_handle.
     If this fails entirely, fall back to web_search with site:x.com.
@@ -299,10 +317,14 @@ async def search_twitter(query: str) -> str:
         tweets = _parse_twitter_results(resp.json())
         if not tweets:
             return "No tweets found."
-        return "\n\n".join(
-            f"@{t['screen_name']} [{t['created_at']}]\n{t['text']}\n{t['url']}"
-            for t in tweets
-        )
+        
+        def _fmt_tweet(t):
+            lines = [f"@{t['screen_name']} [{t['created_at']}]", t['text'], t['url']]
+            if t.get('media'):
+                lines.append("media: " + " | ".join(t['media']))
+            return "\n".join(lines)
+        
+        return "\n\n".join(_fmt_tweet(t) for t in tweets)
     except Exception as e:
         return f"Twitter search failed: {e}"
 
