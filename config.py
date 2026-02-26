@@ -33,7 +33,7 @@ OWNER_DISCORD_ID = int(os.getenv("OWNER_DISCORD_ID", "0"))
 # =============================================================================
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-AGENT_MODEL = "google/gemini-2.0-flash-001"
+AGENT_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free"
 AGENT_SUMMARIZE_AFTER = 100
 AGENT_KEEP_RECENT = 10
 
