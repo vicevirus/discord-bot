@@ -61,14 +61,17 @@ def get_ctf_year(channel):
 
 def parse_writeup_metadata(lines):
     """
-    Parse category and challenge name from writeup lines using fuzzy matching.
+    Parse category, challenge name and solver from writeup lines using fuzzy matching.
     
-    Returns: (category, challenge_name, content_start_index, errors)
+    Returns: (category, challenge_name, solver, content_start_index, errors)
     """
     category = None
     challenge_name = None
+    solver = None
     content_start_index = None
     errors = []
+    
+    SOLVER_PATTERNS = ['solver:', 'solved by:', 'solved:']
     
     for i, line in enumerate(lines[1:-1]):  # Skip first and last ---
         line_lower = line.lower().strip()
@@ -87,6 +90,13 @@ def parse_writeup_metadata(lines):
                     challenge_name = line.split(":", 1)[1].strip()
                     break
         
+        # Try to match solver
+        if solver is None:
+            for pattern in SOLVER_PATTERNS:
+                if line_lower.startswith(pattern):
+                    solver = line.split(":", 1)[1].strip()
+                    break
+        
         # Find content start (first blank line after headers)
         if line.strip() == "" and content_start_index is None and (category or challenge_name):
             content_start_index = i + 2
@@ -100,7 +110,7 @@ def parse_writeup_metadata(lines):
     if content_start_index is None and category and challenge_name:
         errors.append("❓ Missing **blank line** after headers before content")
     
-    return category, challenge_name, content_start_index, errors
+    return category, challenge_name, solver, content_start_index, errors
 
 
 async def process_batch_writeup(message, writeup_msg, ctf, year):
@@ -131,7 +141,7 @@ async def process_batch_writeup(message, writeup_msg, ctf, year):
         return False, "no_closing"
     
     # Parse metadata with fuzzy matching
-    category, challenge_name, content_start_index, errors = parse_writeup_metadata(lines)
+    category, challenge_name, solver, content_start_index, errors = parse_writeup_metadata(lines)
     
     if errors:
         error_text = "\n".join(errors)
@@ -155,7 +165,7 @@ async def process_batch_writeup(message, writeup_msg, ctf, year):
     
     # Upload to GitHub
     sender_username = writeup_msg.author.name
-    result = create_folder_structure(ctf, category, challenge_name, content, sender_username, year)
+    result = create_folder_structure(ctf, category, challenge_name, content, sender_username, year, solver=solver)
     
     if result == "exist":
         await message.channel.send(f"⏭️ `{category}-{challenge_name}.md` already exists. Skipping...")
@@ -334,13 +344,21 @@ async def handle_quick_writeup(message):
     if cat_match:
         category = cat_match.group(1).strip()
     
-    # Match title:something (can have spaces - takes everything after title: until end of line)
-    title_match = re.search(r'title:(.+?)(?:\s+cat:|\s*$)', first_line, re.IGNORECASE)
+    # Match title:something (can have spaces - takes everything after title: until next param or end)
+    title_match = re.search(r'title:(.+?)(?:\s+cat:|\s+solver:|\s*$)', first_line, re.IGNORECASE)
     if not title_match:
         # Try alternative: title is everything after "title:" to end of line
         title_match = re.search(r'title:(.+)$', first_line, re.IGNORECASE)
     if title_match:
         challenge_name = title_match.group(1).strip()
+    
+    # Match solver:something (optional - who solved the challenge)
+    solver = None
+    solver_match = re.search(r'solver:(.+?)(?:\s+cat:|\s+title:|\s*$)', first_line, re.IGNORECASE)
+    if not solver_match:
+        solver_match = re.search(r'solver:(.+)$', first_line, re.IGNORECASE)
+    if solver_match:
+        solver = solver_match.group(1).strip()
     
     if not category or not challenge_name:
         await message.channel.send(
@@ -407,7 +425,7 @@ async def handle_quick_writeup(message):
     sender_username = message.author.name
     
     # Upload to GitHub
-    result = create_folder_structure(ctf, category_normalized, challenge_normalized, full_content, sender_username, year)
+    result = create_folder_structure(ctf, category_normalized, challenge_normalized, full_content, sender_username, year, solver=solver)
     
     # Build GitHub URL
     github_url = (

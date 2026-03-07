@@ -34,12 +34,15 @@ def extract_year_from_ctf(ctf_name):
     return str(datetime.now().year)
 
 
-def create_folder_structure(ctf, category, challenge_name, content, sender_username, year=None):
+def create_folder_structure(ctf, category, challenge_name, content, sender_username, year=None, solver=None):
     headers = {
         "Authorization": f"token {GITHUB_PAT}",
         "Accept": "application/vnd.github.v3+json"
     }
-    content_with_author = f"{content}\n\nSolved by: {sender_username}"
+    footer = f"\n\nCompiled by: {sender_username}"
+    if solver:
+        footer += f"\nSolved by: {solver}"
+    content_with_author = f"{content}{footer}"
     parent_path = PARENT_FOLDER
     create_folder_on_github(parent_path, headers)
     
@@ -162,8 +165,10 @@ def get_writeup_author(ctf, category, challenge_name, year=None):
     
     content = base64.b64decode(response.json()["content"]).decode("utf-8")
     
-    # Look for "Solved by: username" at the end
+    # Look for "Compiled by: username" at the end (legacy: "Solved by:")
     for line in content.split('\n')[::-1]:  # reverse to find last occurrence
+        if line.strip().startswith("Compiled by:"):
+            return line.split("Compiled by:")[1].strip()
         if line.strip().startswith("Solved by:"):
             return line.split("Solved by:")[1].strip()
     return None

@@ -20,8 +20,9 @@ HELP_MESSAGE = """**Bot Commands:**
     List upcoming CTF events (next 10). See ctftime.org for more.
 
 # Writeups
->writeup cat:<category> title:<challenge-name>
+>writeup cat:<category> title:<challenge-name> solver:<who-solved>
     Quick writeup submission (supports attachments + long writeups).
+    solver: is optional - credits who solved the challenge.
 
 >ctf writeup
     Batch compile all writeups from channel (text only).
@@ -60,12 +61,13 @@ WRITEUP_HELP_MESSAGE = """**Writeup Commands**
 
 **Method 1: Quick Submit (Recommended)**
 ```
->writeup cat:crypto title:baby-rsa
+>writeup cat:crypto title:baby-rsa solver:alice
 Your writeup content here...
 
 Code blocks, markdown, everything works!
 Attach images/files to the same message.
 ```
+`solver:` is optional - credits who solved the challenge.
 Images & files auto-uploaded to GitHub (permanent links)
 
 **Method 2: Batch Upload (Text Only)**
@@ -74,11 +76,13 @@ Post writeups anywhere in channel:
 ---
 Category: crypto
 Challenge Name: baby-rsa
+Solver: alice
 
 Your writeup content...
 ---
 ```
 Then run `>ctf writeup` to batch upload all.
+`Solver:` line is optional - credits who solved the challenge.
 Note: No image/attachment support - use Method 1 for images!
 
 **Delete Writeup**
@@ -98,7 +102,7 @@ SLASH_HELP_MESSAGE = """**Bot Commands:**
 >ctf upcoming
 
 # Writeups
->writeup cat:<category> title:<challenge-name>
+>writeup cat:<category> title:<challenge-name> solver:<who-solved>
 >ctf writeup           (batch upload)
 >writeup-delete cat:<category> title:<challenge-name>
 
@@ -126,12 +130,13 @@ SLASH_WRITEUP_HELP_MESSAGE = """**Writeup Commands**
 
 **Method 1: Quick Submit (Recommended)**
 ```
->writeup cat:crypto title:baby-rsa
+>writeup cat:crypto title:baby-rsa solver:alice
 Your writeup content here...
 
 Markdown, code blocks - all work!
 Paste images directly (ctrl+v).
 ```
+`solver:` is optional - credits who solved the challenge.
 Images & files auto-uploaded to GitHub (permanent)
 
 **Method 2: Batch Upload (Text Only)**
@@ -140,11 +145,13 @@ Post writeups anywhere in channel:
 ---
 Category: crypto
 Challenge Name: baby-rsa
+Solver: alice
 
 Your writeup content...
 ---
 ```
 Then run `>ctf writeup` to batch upload all.
+`Solver:` line is optional - credits who solved the challenge.
 Note: No image/attachment support - use Method 1 for images!
 
 **Delete Writeup**
