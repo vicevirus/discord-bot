@@ -91,6 +91,11 @@ Note: No image/attachment support - use Method 1 for images!
 ```
 Only author or admin can delete.
 
+**How `solver:` works**
+- Writeup footer always shows `Compiled by: <you>` (whoever submitted)
+- If you add `solver:`, it also shows `Solved by: <solver>`
+- Use this when someone else solved it but you're writing it up!
+
 Long writeups? No problem - bot auto-handles Discord's message.txt conversion."""
 
 
@@ -159,7 +164,12 @@ Use `/delwriteup` slash command (with autocomplete!) or:
 ```
 >writeup-delete cat:crypto title:baby-rsa
 ```
-Only author or admin can delete."""
+Only author or admin can delete.
+
+**How `solver:` works**
+- Writeup footer always shows `Compiled by: <you>` (whoever submitted)
+- If you add `solver:`, it also shows `Solved by: <solver>`
+- Use this when someone else solved it but you're writing it up!"""
 
 
 # =============================================================================
