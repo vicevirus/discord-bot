@@ -867,20 +867,11 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
         async with agent.iter(user_message, message_history=history) as run:
             async for node in run:
                 if Agent.is_model_request_node(node):
-                    # Stream events from the model request.
-                    # ANY text before FinalResultEvent is preamble (mid-round filler) — skip it.
-                    # Only stream text AFTER FinalResultEvent fires.
+                    # Stream text as it arrives
                     async with node.stream(run.ctx) as request_stream:
-                        final_found = False
-                        async for event in request_stream:
-                            if isinstance(event, FinalResultEvent):
-                                final_found = True
-                                break
-                            # PartDeltaEvent/PartStartEvent before FinalResultEvent = preamble, drop it
-                        if final_found:
-                            async for delta in request_stream.stream_text(delta=True):
-                                text_chunks += 1
-                                await queue.put(('text', delta))
+                        async for delta in request_stream.stream_text(delta=True):
+                            text_chunks += 1
+                            await queue.put(('text', delta))
 
                 elif Agent.is_call_tools_node(node):
                     # Must iterate handle_stream so tools actually execute.
@@ -890,10 +881,8 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
                             pass
 
         full = run.result.output if run.result else ''
-        print(f'[kuro] iter done: text_chunks={text_chunks} output_len={len(full)}', flush=True)
         if text_chunks == 0 and full and full.strip():
-            # iter finished but nothing was streamed (e.g. model only did tools, no FinalResultEvent text)
-            print(f'[kuro] fallback: pushing full output', flush=True)
+            # iter finished but nothing was streamed (e.g. model only did tools)
             await queue.put(('text', full))
         return run.result.new_messages() if run.result else []
 
