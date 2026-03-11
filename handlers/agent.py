@@ -158,6 +158,7 @@ def _main_prompt() -> str:
         "Pronouns ('it', 'that', 'them') refer to conversation context, not the sender. "
         "If unsure about facts, dates, current events — use web_search. Don't guess confidently. "
         "For ANY math or calculations — use python_eval. Never compute in your head. "
+        "When fetching specific images, use expected_content param to verify before sending. "
         "Discord formatting: no tables (use bullets), no emojis, bold and `code` are fine. "
         "Keep responses short. No filler, no summaries unless asked."
     )
@@ -540,12 +541,18 @@ async def _fetch_image_bytes(url: str) -> tuple | None:
 
 
 @agent.tool_plain(retries=2)
-async def fetch_image(url: str) -> str:
+async def fetch_image(url: str, expected_content: str = '') -> str:
     """Fetch an image from a URL and display it directly in Discord chat.
     PREFERRED workflow for finding specific photos:
     1. web_search to find an article/page with the image
     2. fetch_page(url, extract_images=True) to get image URLs from that page
     3. fetch_image with the direct image URL (.jpg/.png/.gif/.webp)
+    
+    Args:
+        url: Direct image URL ending in .jpg/.png/.gif/.webp
+        expected_content: Brief description of what the image should show (e.g. "Najib Razak 1MDB court").
+                         If provided, the image will be verified before sending.
+    
     The image is fetched into memory and uploaded — nothing is saved to disk."""
     q = _status_q.get()
     if q is not None:
@@ -556,6 +563,40 @@ async def fetch_image(url: str) -> str:
     if result is None:
         raise ModelRetry(f"Invalid or inaccessible image at {url}. Try a different direct image URL (.jpg/.png/.gif/.webp).")
     data, fname = result
+    
+    # Verify image content if expected_content is provided
+    if expected_content:
+        if q is not None:
+            q.put_nowait(('status', f'verifying image...'))
+            await asyncio.sleep(0)
+        try:
+            import base64
+            img_b64 = base64.b64encode(data).decode('utf-8')
+            ext = fname.rsplit('.', 1)[-1].lower()
+            mime = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 
+                    'gif': 'image/gif', 'webp': 'image/webp'}.get(ext, 'image/jpeg')
+            
+            # Quick verification call
+            verify_model = _model()
+            from pydantic_ai import Agent as VerifyAgent
+            verifier = VerifyAgent(
+                verify_model,
+                instructions="You verify images. Answer only YES or NO.",
+                retries=0,
+            )
+            verify_prompt = [
+                {"type": "text", "text": f"Does this image show: {expected_content}? Answer YES or NO only."},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}}
+            ]
+            result_text = await verifier.run(verify_prompt)
+            answer = result_text.output.strip().upper()
+            if 'NO' in answer and 'YES' not in answer:
+                raise ModelRetry(f"Image doesn't match '{expected_content}'. Try a different URL.")
+        except ModelRetry:
+            raise
+        except Exception:
+            pass  # Verification failed, send anyway
+    
     if q is not None:
         q.put_nowait(('image_file', (data, fname)))
         await asyncio.sleep(0)
