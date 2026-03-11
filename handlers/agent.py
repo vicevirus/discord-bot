@@ -645,7 +645,7 @@ async def image_search(query: str) -> str:
     # --- Fallback: text search, extract direct image URLs from snippets ---
     try:
         text_results = await asyncio.wait_for(
-            asyncio.to_thread(lambda: list(DDGS(timeout=10).text(f'{query} meme site:imgur.com OR site:i.redd.it OR site:media.tenor.com', max_results=8))),
+            asyncio.to_thread(lambda: list(DDGS(timeout=10).text(f'{query} photo site:imgur.com OR site:i.redd.it', max_results=8))),
             timeout=20,
         )
         candidate_urls = []
