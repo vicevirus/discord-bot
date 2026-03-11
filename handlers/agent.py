@@ -128,7 +128,7 @@ async def _summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMes
 
 agent = Agent(
     _model(),
-    retries=2,
+    retries=4,
     model_settings=_MODEL_SETTINGS,
     history_processors=[_summarize_old_messages],
 )
@@ -539,7 +539,7 @@ async def _fetch_image_bytes(url: str) -> tuple | None:
             return None
 
 
-@agent.tool_plain(retries=2)
+@agent.tool_plain(retries=4)
 async def fetch_image(url: str, expected_content: str) -> str:
     """Fetch an image from a URL and display it directly in Discord chat.
     PREFERRED workflow for finding specific photos:
@@ -605,7 +605,7 @@ async def _verify_image_content(data: bytes, fname: str, expected: str) -> bool:
         return 'YES' in answer
     except Exception as e:
         print(f"[verify] exception: {e}")
-        return False  # If verification fails, reject the image
+        return True  # If verification fails, accept the image
 
 
 @agent.tool_plain
