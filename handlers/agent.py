@@ -720,27 +720,20 @@ async def get_upcoming_ctfs() -> str:
 
 @agent.tool_plain
 def python_eval(expression: str) -> str:
-    """Safely evaluate a Python math/crypto expression and return the exact result.
-    Use this for ANY arithmetic, conversions, or calculations that need precision.
-    You have access to the full `math` module and common CTF/crypto helpers.
-
-    Examples:
-      - '2 ** 64'
-      - 'sqrt(144) + abs(-5)'
-      - 'factorial(20)'
-      - '0xFF ^ 0xAB'
-      - 'hex(255)'
-      - 'bin(42)'
-      - 'int("deadbeef", 16)'
-      - 'gcd(48, 18)'
-      - 'log2(1024)'
-      - 'chr(65)'
-      - 'ord("A")'
-      - 'sum(range(1, 101))'
-      - 'pow(2, 128)'
-      - 'b64encode("hello")'
-      - 'b64decode("aGVsbG8=")'
+    """Evaluate a SINGLE Python expression. Returns the result.
+    
+    ONLY simple one-line expressions work. NO loops, NO imports, NO assignments, NO print.
+    
+    OK: '2**64', 'sqrt(144)', 'gcd(48,18)', 'hex(255)', 'factorial(20)'
+    BAD: 'for x in range(10):', 'import math', 'n=5', 'print(x)'
+    
+    Available: sqrt, pow, log, log2, gcd, factorial, hex, bin, chr, ord, abs, 
+    int, float, sum, range, list, b64encode, b64decode, and more math functions.
     """
+    # Reject multi-line or program-like input
+    if '\n' in expression or 'import ' in expression or 'for ' in expression or 'while ' in expression:
+        return "ERROR: Only single expressions allowed. No loops, imports, or multi-line code. Use expressions like: sqrt(144), gcd(48,18), factorial(20)"
+    
     import math as _math
     import base64 as _b64
     from simpleeval import simple_eval, EvalWithCompoundTypes
