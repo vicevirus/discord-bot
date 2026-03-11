@@ -33,7 +33,7 @@ OWNER_DISCORD_ID = int(os.getenv("OWNER_DISCORD_ID", "0"))
 # =============================================================================
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-AGENT_MODEL = "openai/gpt-5-nano"
+AGENT_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free"  # 30B MoE (3B active), 256K context
 AGENT_SUMMARIZE_AFTER = 100
 AGENT_KEEP_RECENT = 10
 

@@ -21,7 +21,7 @@ from pydantic_ai import (
     PartStartEvent,
     TextPartDelta,
 )
-from pydantic_ai.messages import ModelMessage, ImageUrl, UserContent
+from pydantic_ai.messages import ModelMessage, UserContent
 from pydantic_ai.models.openai import OpenAIModel, OpenAIModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
@@ -31,6 +31,48 @@ from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_
 _status_q: ContextVar[asyncio.Queue | None] = ContextVar('_kuro_status_q', default=None)
 
 from config import OPENROUTER_API_KEY, AGENT_MODEL, AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT, TWITTER_AUTH_TOKEN, TWITTER_CT0
+
+# Cache for model capabilities (None = not checked yet)
+_model_caps: dict | None = None
+
+
+async def _get_model_capabilities() -> dict:
+    """Query OpenRouter API once to get model capabilities (streaming, etc)."""
+    global _model_caps
+    if _model_caps is not None:
+        return _model_caps
+    
+    # Defaults: assume streaming works
+    _model_caps = {"has_streaming": True}
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://openrouter.ai/api/v1/models",
+                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            models = resp.json().get("data", [])
+            for m in models:
+                if m.get("id") == AGENT_MODEL:
+                    arch = m.get("architecture", {})
+                    modality = arch.get("input_modality", "") or arch.get("modality", "")
+                    # Streaming: assume True (API reports are unreliable, most models work)
+                    print(f"[model-caps] {AGENT_MODEL}: {_model_caps} (modality={modality})")
+                    return _model_caps
+            
+            print(f"[model-caps] {AGENT_MODEL} not found in models list, using defaults")
+    except Exception as e:
+        print(f"[model-caps] failed to query OpenRouter: {e}, using defaults")
+    
+    return _model_caps
+
+
+async def _check_model_has_streaming() -> bool:
+    """Check if current model supports streaming."""
+    caps = await _get_model_capabilities()
+    return caps.get("has_streaming", True)
 
 
 def _make_retrying_client() -> AsyncClient:
@@ -118,9 +160,9 @@ async def _summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMes
     old, recent = messages[:-AGENT_KEEP_RECENT], messages[-AGENT_KEEP_RECENT:]
     try:
         async with asyncio.timeout(20):
-            async with _summarizer.run_stream("Summarize the conversation above.", message_history=old) as result:
-                await result.get_output()
-                new_msgs = result.new_messages()
+            # Summarizer doesn't need streaming - just get the result
+            result = await _summarizer.run("Summarize the conversation above.", message_history=old)
+            new_msgs = result.new_messages()
             return new_msgs + recent
     except Exception:
         return recent
@@ -563,13 +605,6 @@ async def fetch_image(url: str, expected_content: str) -> str:
         raise ModelRetry(f"Invalid or inaccessible image at {url}. Try a different direct image URL (.jpg/.png/.gif/.webp).")
     data, fname = result
     
-    # Verify image content matches expected
-    if q is not None:
-        q.put_nowait(('status', 'verifying image...'))
-        await asyncio.sleep(0)
-    if not await _verify_image_content(data, fname, expected_content):
-        raise ModelRetry(f"Image doesn't match '{expected_content}'. Try a different URL.")
-    
     if q is not None:
         q.put_nowait(('image_file', (data, fname)))
         await asyncio.sleep(0)
@@ -577,35 +612,6 @@ async def fetch_image(url: str, expected_content: str) -> str:
 
 
 _IMG_URL_RE = re.compile(r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)(\?\S*)?', re.IGNORECASE)
-
-
-async def _verify_image_content(data: bytes, fname: str, expected: str) -> bool:
-    """Quick vision check if image is relevant to expected content."""
-    try:
-        import base64
-        img_b64 = base64.b64encode(data).decode('utf-8')
-        ext = fname.rsplit('.', 1)[-1].lower()
-        mime = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 
-                'gif': 'image/gif', 'webp': 'image/webp'}.get(ext, 'image/jpeg')
-        
-        verify_model = _model()
-        from pydantic_ai import Agent as VerifyAgent
-        verifier = VerifyAgent(
-            verify_model,
-            instructions="You verify images. Answer only YES or NO.",
-            retries=0,
-        )
-        verify_prompt = [
-            {"type": "text", "text": f"Does this image show or relate to: {expected}? Answer NO if it's a random meme/gif unrelated to the topic. Answer YES or NO only."},
-            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}}
-        ]
-        result_text = await verifier.run(verify_prompt)
-        answer = result_text.output.strip().upper()
-        # Require explicit YES
-        return 'YES' in answer
-    except Exception as e:
-        print(f"[verify] exception: {e}")
-        return True  # If verification fails, accept the image
 
 
 @agent.tool_plain
@@ -632,12 +638,6 @@ async def image_search(query: str) -> str:
             if result is None:
                 continue
             data, fname = result
-            # Verify image matches query
-            if q is not None:
-                q.put_nowait(('status', 'verifying image...'))
-                await asyncio.sleep(0)
-            if not await _verify_image_content(data, fname, query):
-                continue  # Try next image
             if q is not None:
                 q.put_nowait(('image_file', (data, fname)))
                 await asyncio.sleep(0)
@@ -666,12 +666,6 @@ async def image_search(query: str) -> str:
             if result is None:
                 continue
             data, fname = result
-            # Verify image matches query
-            if q is not None:
-                q.put_nowait(('status', 'verifying image...'))
-                await asyncio.sleep(0)
-            if not await _verify_image_content(data, fname, query):
-                continue  # Try next image
             if q is not None:
                 q.put_nowait(('image_file', (data, fname)))
                 await asyncio.sleep(0)
@@ -832,14 +826,15 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
     On a 400 provider error the channel history is trimmed and retried once
     automatically so the bot never gets permanently stuck after a bad turn.
     
-    If image_urls is provided, they are appended to the user message as ImageUrl parts.
+    If image_urls is provided, they are noted in text (model doesn't support vision).
     """
-    # Build multimodal prompt if images provided
+    # Build prompt - note images in text since model doesn't support vision
     if image_urls:
-        prompt_parts: list[UserContent] = [user_message] if isinstance(user_message, str) else list(user_message)
-        for url in image_urls:
-            prompt_parts.append(ImageUrl(url=url))
-        user_message = prompt_parts
+        img_note = "\n".join(f"[User attached image: {url}]" for url in image_urls)
+        if isinstance(user_message, str):
+            user_message = f"{img_note}\n\n{user_message}"
+        else:
+            user_message = [img_note + "\n\n"] + list(user_message)
     INACTIVITY_TIMEOUT = 120  # 120s between any queue events before giving up
 
     _SENTINEL = object()
@@ -857,27 +852,37 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
 
     async def _run_once(history: list):
         text_chunks = 0
-        async with agent.iter(user_message, message_history=history) as run:
-            async for node in run:
-                if Agent.is_model_request_node(node):
-                    # Stream text as it arrives
-                    async with node.stream(run.ctx) as request_stream:
-                        async for delta in request_stream.stream_text(delta=True):
-                            text_chunks += 1
-                            await queue.put(('text', delta))
+        has_streaming = await _check_model_has_streaming()
+        
+        if has_streaming:
+            # Streaming mode: iterate nodes and stream text deltas
+            async with agent.iter(user_message, message_history=history) as run:
+                async for node in run:
+                    if Agent.is_model_request_node(node):
+                        # Stream text as it arrives
+                        async with node.stream(run.ctx) as request_stream:
+                            async for delta in request_stream.stream_text(delta=True):
+                                text_chunks += 1
+                                await queue.put(('text', delta))
 
-                elif Agent.is_call_tools_node(node):
-                    # Must iterate handle_stream so tools actually execute.
-                    # Tool status updates are pushed by the tools themselves via _status_q.
-                    async with node.stream(run.ctx) as handle_stream:
-                        async for _ in handle_stream:
-                            pass
+                    elif Agent.is_call_tools_node(node):
+                        # Must iterate handle_stream so tools actually execute.
+                        # Tool status updates are pushed by the tools themselves via _status_q.
+                        async with node.stream(run.ctx) as handle_stream:
+                            async for _ in handle_stream:
+                                pass
 
-        full = run.result.output if run.result else ''
-        if text_chunks == 0 and full and full.strip():
-            # iter finished but nothing was streamed (e.g. model only did tools)
-            await queue.put(('text', full))
-        return run.result.new_messages() if run.result else []
+            full = run.result.output if run.result else ''
+            if text_chunks == 0 and full and full.strip():
+                # iter finished but nothing was streamed (e.g. model only did tools)
+                await queue.put(('text', full))
+            return run.result.new_messages() if run.result else []
+        else:
+            # Non-streaming mode: use regular run() and push full output at once
+            result = await agent.run(user_message, message_history=history)
+            if result.output:
+                await queue.put(('text', result.output))
+            return result.new_messages()
 
     async def _producer():
         try:
@@ -928,8 +933,14 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
 async def handle_agent_message(channel_id: int, user_message: str) -> str:
     try:
         async with asyncio.timeout(45):
-            async with agent.run_stream(user_message, message_history=_history[channel_id]) as result:
-                output = await result.get_output()
+            has_streaming = await _check_model_has_streaming()
+            if has_streaming:
+                async with agent.run_stream(user_message, message_history=_history[channel_id]) as result:
+                    output = await result.get_output()
+                    new_msgs = result.new_messages()
+            else:
+                result = await agent.run(user_message, message_history=_history[channel_id])
+                output = result.output
                 new_msgs = result.new_messages()
             _history[channel_id].extend(new_msgs)
             return strip_tables(output)
