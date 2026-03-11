@@ -738,20 +738,35 @@ def python_eval(expression: str) -> str:
       - 'ord("A")'
       - 'sum(range(1, 101))'
       - 'pow(2, 128)'
+      - 'b64encode("hello")'
+      - 'b64decode("aGVsbG8=")'
     """
     import math as _math
+    import base64 as _b64
     from simpleeval import simple_eval, EvalWithCompoundTypes
     import simpleeval as _simpleeval
     _simpleeval.MAX_COMPREHENSION_LENGTH = 100_000
+
+    def _b64enc(s):
+        if isinstance(s, str):
+            s = s.encode()
+        return _b64.b64encode(s).decode()
+    
+    def _b64dec(s):
+        if isinstance(s, str):
+            s = s.encode()
+        return _b64.b64decode(s).decode()
 
     _functions = {
         # math basics
         "abs": abs, "round": round, "min": min, "max": max,
         "sum": sum, "len": len, "sorted": sorted, "all": all, "any": any,
-        "int": int, "float": float, "str": str, "bool": bool,
+        "int": int, "float": float, "str": str, "bool": bool, "bytes": bytes,
         "range": range, "list": list, "tuple": tuple, "set": set, "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,
         # type conversions
         "hex": hex, "bin": bin, "oct": oct, "chr": chr, "ord": ord,
+        # base64
+        "b64encode": _b64enc, "b64decode": _b64dec,
         # math module
         "sqrt": _math.sqrt, "pow": pow,
         "ceil": _math.ceil, "floor": _math.floor,
