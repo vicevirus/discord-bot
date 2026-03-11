@@ -580,7 +580,7 @@ _IMG_URL_RE = re.compile(r'https?://\S+\.(?:jpg|jpeg|png|gif|webp)(\?\S*)?', re.
 
 
 async def _verify_image_content(data: bytes, fname: str, expected: str) -> bool:
-    """Quick vision check if image matches expected content."""
+    """Quick vision check if image is relevant to expected content."""
     try:
         import base64
         img_b64 = base64.b64encode(data).decode('utf-8')
@@ -596,7 +596,7 @@ async def _verify_image_content(data: bytes, fname: str, expected: str) -> bool:
             retries=0,
         )
         verify_prompt = [
-            {"type": "text", "text": f"Does this image show: {expected}? Answer YES or NO only."},
+            {"type": "text", "text": f"Is this image relevant to: {expected}? Be lenient - if it's somewhat related, answer YES. Only answer NO if completely unrelated. Answer YES or NO only."},
             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}}
         ]
         result_text = await verifier.run(verify_prompt)
