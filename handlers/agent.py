@@ -596,14 +596,16 @@ async def _verify_image_content(data: bytes, fname: str, expected: str) -> bool:
             retries=0,
         )
         verify_prompt = [
-            {"type": "text", "text": f"Is this image relevant to: {expected}? Be lenient - if it's somewhat related, answer YES. Only answer NO if completely unrelated. Answer YES or NO only."},
+            {"type": "text", "text": f"Does this image show or relate to: {expected}? Answer NO if it's a random meme/gif unrelated to the topic. Answer YES or NO only."},
             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}}
         ]
         result_text = await verifier.run(verify_prompt)
         answer = result_text.output.strip().upper()
-        return 'YES' in answer or 'NO' not in answer
-    except Exception:
-        return True  # If verification fails, assume it's fine
+        # Require explicit YES
+        return 'YES' in answer
+    except Exception as e:
+        print(f"[verify] exception: {e}")
+        return False  # If verification fails, reject the image
 
 
 @agent.tool_plain
