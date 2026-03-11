@@ -21,7 +21,7 @@ from pydantic_ai import (
     PartStartEvent,
     TextPartDelta,
 )
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ImageUrl, UserContent
 from pydantic_ai.models.openai import OpenAIModel, OpenAIModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
@@ -778,7 +778,7 @@ def _is_context_400(exc: Exception) -> bool:
     return ("400" in s or "bad_request" in s) and "provider returned error" not in s
 
 
-async def stream_agent_message(channel_id: int, user_message: str):
+async def stream_agent_message(channel_id: int, user_message: str | list[UserContent], image_urls: list[str] | None = None):
     """Async generator that yields ('text', delta) or ('status', msg) tuples.
 
     Times out only if no token/status arrives for 180 s — active tool chains
@@ -787,7 +787,15 @@ async def stream_agent_message(channel_id: int, user_message: str):
 
     On a 400 provider error the channel history is trimmed and retried once
     automatically so the bot never gets permanently stuck after a bad turn.
+    
+    If image_urls is provided, they are appended to the user message as ImageUrl parts.
     """
+    # Build multimodal prompt if images provided
+    if image_urls:
+        prompt_parts: list[UserContent] = [user_message] if isinstance(user_message, str) else list(user_message)
+        for url in image_urls:
+            prompt_parts.append(ImageUrl(url=url))
+        user_message = prompt_parts
     INACTIVITY_TIMEOUT = 120  # 120s between any queue events before giving up
 
     _SENTINEL = object()

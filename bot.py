@@ -65,6 +65,8 @@ from handlers import (
 
 _MAX_ATTACH_BYTES = 50 * 1024   # 50 KB per file
 _MAX_TOTAL_BYTES  = 100 * 1024  # 100 KB total
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB per image
+_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 
 async def read_txt_attachments(message) -> str:
     """
@@ -100,6 +102,31 @@ async def read_txt_attachments(message) -> str:
             except Exception:
                 pass
     return '\n\n'.join(parts)
+
+
+def get_image_urls(message) -> list[str]:
+    """
+    Extract image URLs from Discord message attachments.
+    - Whitelist: jpg, jpeg, png, gif, webp
+    - MIME check: content-type must start with image/
+    - Size cap: 5 MB per image (Discord CDN URLs are passed directly)
+    """
+    if not message.attachments:
+        return []
+    urls = []
+    for att in message.attachments:
+        name = (att.filename or '').lower()
+        ext = '.' + name.rsplit('.', 1)[-1] if '.' in name else ''
+        if ext not in _IMAGE_EXTENSIONS:
+            continue
+        ct = (att.content_type or '').split(';')[0].strip().lower()
+        if ct and not ct.startswith('image/'):
+            continue
+        size = att.size or 0
+        if size > _MAX_IMAGE_BYTES:
+            continue
+        urls.append(att.url)
+    return urls
 
 
 # =============================================================================
@@ -378,7 +405,11 @@ async def on_message(message):
         attachment_text = await read_txt_attachments(message)
         if attachment_text:
             user_input = (user_input + '\n\n' + attachment_text).strip()
-        if user_input:
+        image_urls = get_image_urls(message)
+        # Allow message if there's text OR images
+        if user_input or image_urls:
+            if not user_input and image_urls:
+                user_input = f'<sender>{sender_name}</sender> [attached image(s)]'
             mention = message.author.mention
             sent = await message.channel.send(f'{mention} ▍', suppress_embeds=True)
             accumulated = ''
@@ -393,7 +424,7 @@ async def on_message(message):
 
             try:
                 async with message.channel.typing():
-                    async for event in stream_agent_message(message.channel.id, user_input):
+                    async for event in stream_agent_message(message.channel.id, user_input, image_urls=image_urls or None):
                         kind, data = event
                         if kind == 'status':
                             current_status = data
@@ -480,7 +511,11 @@ async def on_message(message):
             attachment_text = await read_txt_attachments(message)
             if attachment_text:
                 user_input = (user_input + '\n\n' + attachment_text).strip()
-            if user_input:
+            image_urls = get_image_urls(message)
+            # Allow message if there's text OR images
+            if user_input or image_urls:
+                if not user_input and image_urls:
+                    user_input = '[attached image(s)]'
                 sent = await message.channel.send('▍', suppress_embeds=True)
                 accumulated = ''
                 current_status = ''
@@ -489,7 +524,7 @@ async def on_message(message):
 
                 try:
                     async with message.channel.typing():
-                        async for event in stream_agent_message(message.channel.id, user_input):
+                        async for event in stream_agent_message(message.channel.id, user_input, image_urls=image_urls or None):
                             kind, data = event
                             if kind == 'status':
                                 current_status = data
