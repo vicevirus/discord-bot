@@ -38,7 +38,7 @@ AGENT_BASE_URL = os.getenv("AGENT_BASE_URL", "https://gpt.mirbuds.com/claudecode
 AGENT_MODEL = os.getenv("AGENT_MODEL", "claude-sonnet-4-20250514")
 
 # Fallback: OpenRouter
-FALLBACK_API_KEY = os.getenv("FALLBACK_API_KEY", os.getenv("OPENROUTER_API_KEY", ""))
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 FALLBACK_BASE_URL = os.getenv("FALLBACK_BASE_URL", "https://openrouter.ai/api/v1")
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "nvidia/nemotron-3-nano-30b-a3b:free")
 

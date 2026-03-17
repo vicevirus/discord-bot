@@ -321,10 +321,10 @@ async def slash_model(interaction: discord.Interaction):
         except Exception:
             return False
 
-    from config import AGENT_BASE_URL, AGENT_API_KEY, FALLBACK_BASE_URL, FALLBACK_API_KEY
+    from config import AGENT_BASE_URL, AGENT_API_KEY, FALLBACK_BASE_URL, OPENROUTER_API_KEY
     primary_ok, fallback_ok = await asyncio.gather(
         _ping(f"{AGENT_BASE_URL}/v1/messages", {"x-api-key": AGENT_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}),
-        _ping(f"{FALLBACK_BASE_URL}/chat/completions", {"Authorization": f"Bearer {FALLBACK_API_KEY}", "Content-Type": "application/json"}),
+        _ping(f"{FALLBACK_BASE_URL}/chat/completions", {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}),
     )
 
     p_icon = "+" if primary_ok else "x"

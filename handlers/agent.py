@@ -34,7 +34,7 @@ _status_q: ContextVar[asyncio.Queue | None] = ContextVar('_kuro_status_q', defau
 
 from config import (
     AGENT_API_KEY, AGENT_BASE_URL, AGENT_MODEL,
-    FALLBACK_API_KEY, FALLBACK_BASE_URL, FALLBACK_MODEL,
+    OPENROUTER_API_KEY, FALLBACK_BASE_URL, FALLBACK_MODEL,
     AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT,
     TWITTER_AUTH_TOKEN, TWITTER_CT0,
 )
@@ -84,7 +84,7 @@ def _model():
 def _make_fallback_provider():
     return OpenAIProvider(
         openai_client=openai.AsyncOpenAI(
-            api_key=FALLBACK_API_KEY,
+            api_key=OPENROUTER_API_KEY,
             base_url=FALLBACK_BASE_URL,
             http_client=_make_retrying_client(),
         ),
@@ -813,7 +813,7 @@ def _is_context_400(exc: Exception) -> bool:
 
 
 def _has_fallback() -> bool:
-    return bool(FALLBACK_API_KEY)
+    return bool(OPENROUTER_API_KEY)
 
 
 async def stream_agent_message(channel_id: int, user_message: str | list[UserContent], image_urls: list[str] | None = None):
