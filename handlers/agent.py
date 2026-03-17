@@ -22,7 +22,9 @@ from pydantic_ai import (
     TextPartDelta,
 )
 from pydantic_ai.messages import ModelMessage, UserContent
-from pydantic_ai.models.openai import OpenAIModel, OpenAIModelSettings
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIModelSettings
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
@@ -30,49 +32,12 @@ from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_
 # ContextVar ensures concurrent streams don't interfere.
 _status_q: ContextVar[asyncio.Queue | None] = ContextVar('_kuro_status_q', default=None)
 
-from config import OPENROUTER_API_KEY, AGENT_MODEL, AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT, TWITTER_AUTH_TOKEN, TWITTER_CT0
-
-# Cache for model capabilities (None = not checked yet)
-_model_caps: dict | None = None
-
-
-async def _get_model_capabilities() -> dict:
-    """Query OpenRouter API once to get model capabilities (streaming, etc)."""
-    global _model_caps
-    if _model_caps is not None:
-        return _model_caps
-    
-    # Defaults: assume streaming works
-    _model_caps = {"has_streaming": True}
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                "https://openrouter.ai/api/v1/models",
-                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            models = resp.json().get("data", [])
-            for m in models:
-                if m.get("id") == AGENT_MODEL:
-                    arch = m.get("architecture", {})
-                    modality = arch.get("input_modality", "") or arch.get("modality", "")
-                    # Streaming: assume True (API reports are unreliable, most models work)
-                    print(f"[model-caps] {AGENT_MODEL}: {_model_caps} (modality={modality})")
-                    return _model_caps
-            
-            print(f"[model-caps] {AGENT_MODEL} not found in models list, using defaults")
-    except Exception as e:
-        print(f"[model-caps] failed to query OpenRouter: {e}, using defaults")
-    
-    return _model_caps
-
-
-async def _check_model_has_streaming() -> bool:
-    """Check if current model supports streaming."""
-    caps = await _get_model_capabilities()
-    return caps.get("has_streaming", True)
+from config import (
+    AGENT_API_KEY, AGENT_BASE_URL, AGENT_MODEL,
+    FALLBACK_API_KEY, FALLBACK_BASE_URL, FALLBACK_MODEL,
+    AGENT_SUMMARIZE_AFTER, AGENT_KEEP_RECENT,
+    TWITTER_AUTH_TOKEN, TWITTER_CT0,
+)
 
 
 def _make_retrying_client() -> AsyncClient:
@@ -102,23 +67,42 @@ def _make_retrying_client() -> AsyncClient:
 
 
 def _make_provider():
-    return OpenAIProvider(
-        openai_client=openai.AsyncOpenAI(
-            api_key=OPENROUTER_API_KEY,
-            base_url="https://openrouter.ai/api/v1",
-            http_client=_make_retrying_client(),
-        ),
+    return AnthropicProvider(
+        api_key=AGENT_API_KEY,
+        base_url=AGENT_BASE_URL,
+        http_client=_make_retrying_client(),
     )
 
 
 def _model():
-    return OpenAIModel(
+    return AnthropicModel(
         AGENT_MODEL,
         provider=_make_provider(),
     )
 
 
-_MODEL_SETTINGS = OpenAIModelSettings(
+def _make_fallback_provider():
+    return OpenAIProvider(
+        openai_client=openai.AsyncOpenAI(
+            api_key=FALLBACK_API_KEY,
+            base_url=FALLBACK_BASE_URL,
+            http_client=_make_retrying_client(),
+        ),
+    )
+
+
+def _fallback_model():
+    return OpenAIChatModel(
+        FALLBACK_MODEL,
+        provider=_make_fallback_provider(),
+    )
+
+
+_MODEL_SETTINGS = AnthropicModelSettings(
+    max_tokens=4096,
+)
+
+_FALLBACK_MODEL_SETTINGS = OpenAIModelSettings(
     max_tokens=4096,
 )
 
@@ -142,6 +126,8 @@ _BROWSER_HEADERS = {
 
 _history: dict[int, list] = defaultdict(list)
 
+# Track which channel is using fallback to avoid repeated failures
+_using_fallback: set[int] = set()
 
 _summarizer = Agent(
     _model(),
@@ -151,6 +137,16 @@ _summarizer = Agent(
     ),
     retries=2,
     model_settings=_MODEL_SETTINGS,
+)
+
+_fallback_summarizer = Agent(
+    _fallback_model(),
+    instructions=(
+        "Summarize the conversation concisely. Keep all technical details, CTF challenge names, "
+        "flags, code, and decisions. Skip small talk. No preamble. No emojis."
+    ),
+    retries=2,
+    model_settings=_FALLBACK_MODEL_SETTINGS,
 )
 
 
@@ -816,6 +812,10 @@ def _is_context_400(exc: Exception) -> bool:
     return ("400" in s or "bad_request" in s) and "provider returned error" not in s
 
 
+def _has_fallback() -> bool:
+    return bool(FALLBACK_API_KEY)
+
+
 async def stream_agent_message(channel_id: int, user_message: str | list[UserContent], image_urls: list[str] | None = None):
     """Async generator that yields ('text', delta) or ('status', msg) tuples.
 
@@ -850,44 +850,39 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
             dots += 1
             queue.put_nowait(('status', 'thinking' + '.' * (dots % 4 + 1)))
 
-    async def _run_once(history: list):
+    async def _run_once(history: list, *, use_fallback: bool = False):
         text_chunks = 0
-        has_streaming = await _check_model_has_streaming()
-        
-        if has_streaming:
-            # Streaming mode: iterate nodes and stream text deltas
-            async with agent.iter(user_message, message_history=history) as run:
-                async for node in run:
-                    if Agent.is_model_request_node(node):
-                        # Stream text as it arrives
-                        async with node.stream(run.ctx) as request_stream:
-                            async for delta in request_stream.stream_text(delta=True):
-                                text_chunks += 1
-                                await queue.put(('text', delta))
+        model_kw = {}
+        if use_fallback:
+            model_kw = {"model": _fallback_model(), "model_settings": _FALLBACK_MODEL_SETTINGS}
+        # Streaming mode: iterate nodes and stream text deltas
+        async with agent.iter(user_message, message_history=history, **model_kw) as run:
+            async for node in run:
+                if Agent.is_model_request_node(node):
+                    # Stream text as it arrives
+                    async with node.stream(run.ctx) as request_stream:
+                        async for delta in request_stream.stream_text(delta=True):
+                            text_chunks += 1
+                            await queue.put(('text', delta))
 
-                    elif Agent.is_call_tools_node(node):
-                        # Must iterate handle_stream so tools actually execute.
-                        # Tool status updates are pushed by the tools themselves via _status_q.
-                        async with node.stream(run.ctx) as handle_stream:
-                            async for _ in handle_stream:
-                                pass
+                elif Agent.is_call_tools_node(node):
+                    # Must iterate handle_stream so tools actually execute.
+                    # Tool status updates are pushed by the tools themselves via _status_q.
+                    async with node.stream(run.ctx) as handle_stream:
+                        async for _ in handle_stream:
+                            pass
 
-            full = run.result.output if run.result else ''
-            if text_chunks == 0 and full and full.strip():
-                # iter finished but nothing was streamed (e.g. model only did tools)
-                await queue.put(('text', full))
-            return run.result.new_messages() if run.result else []
-        else:
-            # Non-streaming mode: use regular run() and push full output at once
-            result = await agent.run(user_message, message_history=history)
-            if result.output:
-                await queue.put(('text', result.output))
-            return result.new_messages()
+        full = run.result.output if run.result else ''
+        if text_chunks == 0 and full and full.strip():
+            # iter finished but nothing was streamed (e.g. model only did tools)
+            await queue.put(('text', full))
+        return run.result.new_messages() if run.result else []
 
     async def _producer():
         try:
             new_msgs = await _run_once(_history[channel_id])
             _history[channel_id].extend(new_msgs)
+            _using_fallback.discard(channel_id)
         except Exception as exc:
             if _is_context_400(exc):
                 # Bad/oversized context — trim history and retry once
@@ -897,6 +892,17 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
                 try:
                     new_msgs = await _run_once(_history[channel_id])
                     _history[channel_id].extend(new_msgs)
+                except Exception as exc2:
+                    _history[channel_id] = []
+                    await queue.put(exc2)
+            elif _has_fallback():
+                # Primary failed — try fallback model
+                print(f'[kuro] primary model failed, falling back to {FALLBACK_MODEL}: {exc}', flush=True)
+                try:
+                    await queue.put(('status', f'switching to fallback model...'))
+                    new_msgs = await _run_once(_history[channel_id], use_fallback=True)
+                    _history[channel_id].extend(new_msgs)
+                    _using_fallback.add(channel_id)
                 except Exception as exc2:
                     _history[channel_id] = []
                     await queue.put(exc2)
@@ -933,15 +939,22 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
 async def handle_agent_message(channel_id: int, user_message: str) -> str:
     try:
         async with asyncio.timeout(45):
-            has_streaming = await _check_model_has_streaming()
-            if has_streaming:
+            try:
                 async with agent.run_stream(user_message, message_history=_history[channel_id]) as result:
                     output = await result.get_output()
                     new_msgs = result.new_messages()
-            else:
-                result = await agent.run(user_message, message_history=_history[channel_id])
-                output = result.output
-                new_msgs = result.new_messages()
+            except Exception:
+                if not _has_fallback():
+                    raise
+                print(f'[kuro] handle_agent primary failed, falling back to {FALLBACK_MODEL}', flush=True)
+                async with agent.run_stream(
+                    user_message,
+                    message_history=_history[channel_id],
+                    model=_fallback_model(),
+                    model_settings=_FALLBACK_MODEL_SETTINGS,
+                ) as result:
+                    output = await result.get_output()
+                    new_msgs = result.new_messages()
             _history[channel_id].extend(new_msgs)
             return strip_tables(output)
     except asyncio.TimeoutError:

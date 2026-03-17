@@ -21,6 +21,8 @@ from config import (
     TWITTER_AUTH_TOKEN,
     TWITTER_CT0,
     OWNER_DISCORD_ID,
+    AGENT_MODEL,
+    FALLBACK_MODEL,
 )
 from handlers import (
     # CTF handlers
@@ -56,6 +58,7 @@ from handlers import (
     handle_agent_message,
     stream_agent_message,
     strip_tables,
+    _using_fallback,
 )
 
 
@@ -298,6 +301,40 @@ async def slash_help(interaction: discord.Interaction):
 async def slash_help_writeup(interaction: discord.Interaction):
     """Slash command: /help-writeup"""
     await interaction.response.send_message(SLASH_WRITEUP_HELP_MESSAGE, ephemeral=True)
+
+
+@bot.tree.command(name="model", description="Show current AI model info")
+async def slash_model(interaction: discord.Interaction):
+    """Slash command: /model"""
+    await interaction.response.defer(ephemeral=True)
+
+    active = FALLBACK_MODEL if interaction.channel_id in _using_fallback else AGENT_MODEL
+    status = "fallback" if interaction.channel_id in _using_fallback else "primary"
+
+    # Quick connectivity checks
+    async def _ping(url, headers):
+        try:
+            async with httpx.AsyncClient(timeout=5) as c:
+                r = await c.post(url, headers=headers, json={"model": "ping", "messages": [], "max_tokens": 1})
+                # Any non-timeout response (even 400/401) means endpoint is reachable
+                return True
+        except Exception:
+            return False
+
+    from config import AGENT_BASE_URL, AGENT_API_KEY, FALLBACK_BASE_URL, FALLBACK_API_KEY
+    primary_ok, fallback_ok = await asyncio.gather(
+        _ping(f"{AGENT_BASE_URL}/v1/messages", {"x-api-key": AGENT_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}),
+        _ping(f"{FALLBACK_BASE_URL}/chat/completions", {"Authorization": f"Bearer {FALLBACK_API_KEY}", "Content-Type": "application/json"}),
+    )
+
+    p_icon = "+" if primary_ok else "x"
+    f_icon = "+" if fallback_ok else "x"
+    msg = (
+        f"**Active:** `{active}` ({status})\n"
+        f"**Primary:** `{AGENT_MODEL}` [{p_icon}]\n"
+        f"**Fallback:** `{FALLBACK_MODEL}` [{f_icon}]"
+    )
+    await interaction.followup.send(msg, ephemeral=True)
 
 
 @bot.tree.command(name="chall", description="Create a challenge thread")

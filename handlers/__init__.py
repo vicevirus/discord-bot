@@ -50,7 +50,7 @@ from handlers.challenge import (
     auto_track_worker,
 )
 
-from handlers.agent import handle_agent_message, stream_agent_message, strip_tables
+from handlers.agent import handle_agent_message, stream_agent_message, strip_tables, _using_fallback
 
 __all__ = [
     # CTF
