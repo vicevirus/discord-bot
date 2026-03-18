@@ -878,15 +878,15 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
                                 if hasattr(event.part, 'content') and event.part.content:
                                     text_chunks += 1
                                     await queue.put(('text', event.part.content))
-                                print(f'[kuro-dbg] PartStartEvent type={type(event.part).__name__} content={getattr(event.part, "content", "N/A")!r}', flush=True)
                             elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
                                 text_chunks += 1
                                 await queue.put(('text', event.delta.content_delta))
-                            elif isinstance(event, PartDeltaEvent):
-                                print(f'[kuro-dbg] unhandled PartDeltaEvent delta_type={type(event.delta).__name__}', flush=True)
+                    # If we were still in thinking when stream ended, close it
+                    if in_thinking:
+                        in_thinking = False
+                        await queue.put(('thinking_end', ''))
 
                 elif Agent.is_call_tools_node(node):
-                    print(f'[kuro-dbg] call_tools_node', flush=True)
                     # Must iterate handle_stream so tools actually execute.
                     # Tool status updates are pushed by the tools themselves via _status_q.
                     async with node.stream(run.ctx) as handle_stream:
@@ -894,7 +894,6 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
                             pass
 
         full = run.result.output if run.result else ''
-        print(f'[kuro-dbg] _run_once done: text_chunks={text_chunks} full_len={len(full)} full={full[:200]!r}', flush=True)
         if text_chunks == 0 and full and full.strip():
             # iter finished but nothing was streamed (e.g. model only did tools)
             await queue.put(('text', full))

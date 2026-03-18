@@ -521,6 +521,9 @@ async def on_message(message):
                 return
 
             final = strip_tables(accumulated)
+            if not final.strip() and thinking_text.strip():
+                # Model only produced thinking with no separate text answer
+                final = strip_tables(thinking_text)
             if not final.strip():
                 await sent.edit(content=_fmt('...'), suppress=True)
             elif len(final) <= _LIMIT:
