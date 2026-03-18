@@ -875,6 +875,9 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
                                 if in_thinking:
                                     in_thinking = False
                                     await queue.put(('thinking_end', ''))
+                                if hasattr(event.part, 'content') and event.part.content:
+                                    text_chunks += 1
+                                    await queue.put(('text', event.part.content))
                             elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
                                 text_chunks += 1
                                 await queue.put(('text', event.delta.content_delta))
