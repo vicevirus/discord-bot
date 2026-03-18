@@ -450,6 +450,8 @@ async def on_message(message):
             mention = message.author.mention
             sent = await message.channel.send(f'{mention} ▍', suppress_embeds=True)
             accumulated = ''
+            thinking_text = ''
+            is_thinking = False
             current_status = ''
             loop = asyncio.get_event_loop()
             last_edit = loop.time()
@@ -459,11 +461,48 @@ async def on_message(message):
             def _fmt(body: str, suffix: str = '') -> str:
                 return f'{mention}\n{body}{suffix}'
 
+            def _thinking_preview(think: str, limit: int) -> str:
+                """Format thinking text as blockquote for Discord display."""
+                # Show last N chars of thinking so user sees latest reasoning
+                lines = think.strip().splitlines()
+                # Take last few lines that fit
+                preview_lines = []
+                chars = 0
+                for line in reversed(lines):
+                    quoted = f'> {line}'
+                    if chars + len(quoted) + 1 > limit - 30:
+                        break
+                    preview_lines.insert(0, quoted)
+                    chars += len(quoted) + 1
+                if not preview_lines:
+                    # Single long line — just truncate
+                    return f'> {think[-(limit - 30):]}'
+                return '\n'.join(preview_lines)
+
             try:
                 async with message.channel.typing():
                     async for event in stream_agent_message(message.channel.id, user_input, image_urls=image_urls or None):
                         kind, data = event
-                        if kind == 'status':
+                        if kind == 'thinking_start':
+                            is_thinking = True
+                            thinking_text = ''
+                            try:
+                                await sent.edit(content=_fmt('🧠 _thinking..._'), suppress=True)
+                            except Exception:
+                                pass
+                        elif kind == 'thinking':
+                            thinking_text += data
+                            now = loop.time()
+                            if now - last_edit >= 1.0:
+                                preview = _thinking_preview(thinking_text, _LIMIT)
+                                try:
+                                    await sent.edit(content=_fmt(f'🧠\n{preview}'), suppress=True)
+                                except Exception:
+                                    pass
+                                last_edit = now
+                        elif kind == 'thinking_end':
+                            is_thinking = False
+                        elif kind == 'status':
                             current_status = data
                             base = strip_tables(accumulated)
                             preview = (base[:_LIMIT - 60] + '...') if len(base) > _LIMIT - 60 else base
