@@ -461,24 +461,6 @@ async def on_message(message):
             def _fmt(body: str, suffix: str = '') -> str:
                 return f'{mention}\n{body}{suffix}'
 
-            def _thinking_preview(think: str, limit: int) -> str:
-                """Format thinking text as blockquote for Discord display."""
-                # Show last N chars of thinking so user sees latest reasoning
-                lines = think.strip().splitlines()
-                # Take last few lines that fit
-                preview_lines = []
-                chars = 0
-                for line in reversed(lines):
-                    quoted = f'> {line}'
-                    if chars + len(quoted) + 1 > limit - 30:
-                        break
-                    preview_lines.insert(0, quoted)
-                    chars += len(quoted) + 1
-                if not preview_lines:
-                    # Single long line — just truncate
-                    return f'> {think[-(limit - 30):]}'
-                return '\n'.join(preview_lines)
-
             try:
                 async with message.channel.typing():
                     async for event in stream_agent_message(message.channel.id, user_input, image_urls=image_urls or None):
@@ -486,17 +468,14 @@ async def on_message(message):
                         if kind == 'thinking_start':
                             is_thinking = True
                             thinking_text = ''
-                            try:
-                                await sent.edit(content=_fmt('🧠 _thinking..._'), suppress=True)
-                            except Exception:
-                                pass
                         elif kind == 'thinking':
                             thinking_text += data
                             now = loop.time()
-                            if now - last_edit >= 1.0:
-                                preview = _thinking_preview(thinking_text, _LIMIT)
+                            if now - last_edit >= 1.0 and thinking_text.strip():
+                                preview = thinking_text.strip()
+                                display = (preview[:_LIMIT - 3] + '...') if len(preview) > _LIMIT else preview
                                 try:
-                                    await sent.edit(content=_fmt(f'🧠\n{preview}'), suppress=True)
+                                    await sent.edit(content=_fmt(display, ' ▍'), suppress=True)
                                 except Exception:
                                     pass
                                 last_edit = now
