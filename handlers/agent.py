@@ -20,6 +20,8 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartStartEvent,
     TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
 )
 from pydantic_ai.messages import ModelMessage, UserContent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -99,7 +101,8 @@ def _fallback_model():
 
 
 _MODEL_SETTINGS = AnthropicModelSettings(
-    max_tokens=4096,
+    max_tokens=16000,
+    anthropic_thinking={"type": "adaptive"},
 )
 
 _FALLBACK_MODEL_SETTINGS = OpenAIModelSettings(
@@ -855,15 +858,26 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
         model_kw = {}
         if use_fallback:
             model_kw = {"model": _fallback_model(), "model_settings": _FALLBACK_MODEL_SETTINGS}
-        # Streaming mode: iterate nodes and stream text deltas
+        # Streaming mode: iterate nodes and stream text + thinking deltas
         async with agent.iter(user_message, message_history=history, **model_kw) as run:
             async for node in run:
                 if Agent.is_model_request_node(node):
-                    # Stream text as it arrives
+                    in_thinking = False
                     async with node.stream(run.ctx) as request_stream:
-                        async for delta in request_stream.stream_text(delta=True):
-                            text_chunks += 1
-                            await queue.put(('text', delta))
+                        async for event in request_stream:
+                            if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
+                                in_thinking = True
+                                await queue.put(('thinking_start', ''))
+                            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, ThinkingPartDelta):
+                                if event.delta.content_delta:
+                                    await queue.put(('thinking', event.delta.content_delta))
+                            elif isinstance(event, PartStartEvent):
+                                if in_thinking:
+                                    in_thinking = False
+                                    await queue.put(('thinking_end', ''))
+                            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                                text_chunks += 1
+                                await queue.put(('text', event.delta.content_delta))
 
                 elif Agent.is_call_tools_node(node):
                     # Must iterate handle_stream so tools actually execute.
