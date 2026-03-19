@@ -13,6 +13,7 @@ from httpx import AsyncClient, HTTPStatusError
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 from pydantic_ai import (
     Agent,
+    BinaryContent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -178,11 +179,15 @@ def _main_prompt() -> str:
         "Be chill, friendly, and helpful. Jokes, banter, memes — all good. Be a homie. "
         "Casual, lowercase, short sentences. No formal language, no flourish. "
         "Never say you're an AI. If asked what you are, just say 'kuro'. "
+        "Talk like a normal person in a group chat. No 'let me know if you need anything', no 'happy to help', no 'feel free to ask'. "
+        "Just answer and move on like a real friend would. "
         "You know CTF, rev, pwn, web, crypto, forensics — but don't brag. "
         "Messages have <sender>username</sender> tags — this is METADATA ONLY. "
         "NEVER put the sender username in any search query or tool call. Search only the actual question. "
         "Pronouns ('it', 'that', 'them') refer to conversation context, not the sender. "
         "If unsure about facts, dates, current events — use web_search. Don't guess confidently. "
+        "When a user asks for an image, photo, meme, or when showing a picture would help — use image_search or web_search → fetch_page(extract_images=True) → fetch_image. "
+        "Don't be afraid to call many tools — accuracy matters more than speed. Use as many tool calls as needed to get the right answer, the right image, or verify information. "
         "For ANY math or calculations — use python_eval. Never compute in your head. "
         "Discord formatting: no tables (use bullets), no emojis, bold and `code` are fine. "
         "Keep responses short. No filler, no summaries unless asked."
@@ -513,6 +518,13 @@ async def fetch_page(url: str, start: int = 0, extract_images: bool = False) -> 
 _IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB
 
+# Lightweight vision sub-agent for verifying images before posting
+_vision_agent = Agent(
+    _model(),
+    instructions="Describe what you see in the image in 1-2 sentences. Be specific about people, objects, text, and context.",
+    retries=1,
+)
+
 # Magic bytes for common image formats
 _IMAGE_MAGIC = [
     (b'\xff\xd8\xff', '.jpg'),       # JPEG
@@ -567,7 +579,7 @@ async def _fetch_image_bytes(url: str) -> tuple | None:
 
 @agent.tool_plain(retries=4)
 async def fetch_image(url: str, expected_content: str) -> str:
-    """Fetch an image from a URL and display it directly in Discord chat.
+    """Fetch an image from a URL, verify it matches expected content using vision, and display it in Discord.
     PREFERRED workflow for finding specific photos:
     1. web_search to find an article/page with the image
     2. fetch_page(url, extract_images=True) to get image URLs from that page
@@ -576,9 +588,9 @@ async def fetch_image(url: str, expected_content: str) -> str:
     Args:
         url: Direct image URL ending in .jpg/.png/.gif/.webp
         expected_content: REQUIRED. Brief description of what the image should show (e.g. "Najib Razak court").
-                         The image will be verified before sending.
+                         The image will be verified with vision before sending.
     
-    The image is fetched into memory and uploaded — nothing is saved to disk."""
+    The image is fetched into memory, verified with vision, and uploaded — nothing is saved to disk."""
     q = _status_q.get()
     if q is not None:
         label = url.split('//')[-1][:50]
@@ -588,6 +600,24 @@ async def fetch_image(url: str, expected_content: str) -> str:
     if result is None:
         raise ModelRetry(f"Invalid or inaccessible image at {url}. Try a different direct image URL (.jpg/.png/.gif/.webp).")
     data, fname = result
+    
+    # Use vision to verify the image matches expected content
+    try:
+        ct = 'image/jpeg' if fname.lower().endswith(('.jpg', '.jpeg')) else \
+             'image/png' if fname.lower().endswith('.png') else \
+             'image/gif' if fname.lower().endswith('.gif') else \
+             'image/webp' if fname.lower().endswith('.webp') else 'image/jpeg'
+        desc_result = await _vision_agent.run([
+            f'Does this image show: {expected_content}? Answer YES or NO, then briefly describe what you see.',
+            BinaryContent(data=data, media_type=ct),
+        ])
+        desc = desc_result.output.strip()
+        if desc.upper().startswith('NO'):
+            raise ModelRetry(f"Image doesn't match '{expected_content}'. Vision says: {desc}. Try a different URL.")
+    except ModelRetry:
+        raise
+    except Exception:
+        pass  # If vision check fails, still post the image
     
     if q is not None:
         q.put_nowait(('image_file', (data, fname)))
