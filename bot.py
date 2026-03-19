@@ -311,28 +311,26 @@ async def slash_model(interaction: discord.Interaction):
     active = FALLBACK_MODEL if interaction.channel_id in _using_fallback else AGENT_MODEL
     status = "fallback" if interaction.channel_id in _using_fallback else "primary"
 
-    # Quick connectivity checks
+    # Quick connectivity check
     async def _ping(url, headers):
         try:
             async with httpx.AsyncClient(timeout=5) as c:
                 r = await c.post(url, headers=headers, json={"model": "ping", "messages": [], "max_tokens": 1})
-                # Any non-timeout response (even 400/401) means endpoint is reachable
                 return True
         except Exception:
             return False
 
-    from config import AGENT_BASE_URL, AGENT_API_KEY, FALLBACK_BASE_URL, OPENROUTER_API_KEY
-    primary_ok, fallback_ok = await asyncio.gather(
-        _ping(f"{AGENT_BASE_URL}/v1/messages", {"x-api-key": AGENT_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}),
-        _ping(f"{FALLBACK_BASE_URL}/chat/completions", {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}),
+    from config import AGENT_BASE_URL, OPENROUTER_API_KEY
+    ok = await _ping(
+        f"{AGENT_BASE_URL}/chat/completions",
+        {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
     )
 
-    p_icon = "+" if primary_ok else "x"
-    f_icon = "+" if fallback_ok else "x"
+    icon = "+" if ok else "x"
     msg = (
         f"**Active:** `{active}` ({status})\n"
-        f"**Primary:** `{AGENT_MODEL}` [{p_icon}]\n"
-        f"**Fallback:** `{FALLBACK_MODEL}` [{f_icon}]"
+        f"**Primary:** `{AGENT_MODEL}` [{icon}]\n"
+        f"**Fallback:** `{FALLBACK_MODEL}`"
     )
     await interaction.followup.send(msg, ephemeral=True)
 
