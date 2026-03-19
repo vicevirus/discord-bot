@@ -16,6 +16,7 @@ from pydantic_ai import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageUrl,
     ModelRetry,
     PartDeltaEvent,
     PartStartEvent,
@@ -813,15 +814,18 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
     On a 400 provider error the channel history is trimmed and retried once
     automatically so the bot never gets permanently stuck after a bad turn.
     
-    If image_urls is provided, they are noted in text (model doesn't support vision).
+    If image_urls is provided, they are passed as ImageUrl for vision-capable models.
     """
-    # Build prompt - note images in text since model doesn't support vision
+    # Build prompt with images as ImageUrl objects for vision support
     if image_urls:
-        img_note = "\n".join(f"[User attached image: {url}]" for url in image_urls)
+        parts: list[UserContent] = []
         if isinstance(user_message, str):
-            user_message = f"{img_note}\n\n{user_message}"
+            parts.append(user_message)
         else:
-            user_message = [img_note + "\n\n"] + list(user_message)
+            parts.extend(user_message)
+        for url in image_urls:
+            parts.append(ImageUrl(url=url))
+        user_message = parts
     INACTIVITY_TIMEOUT = 120  # 120s between any queue events before giving up
 
     _SENTINEL = object()
@@ -840,10 +844,17 @@ async def stream_agent_message(channel_id: int, user_message: str | list[UserCon
     async def _run_once(history: list, *, use_fallback: bool = False):
         text_chunks = 0
         model_kw = {}
+        msg = user_message
         if use_fallback:
             model_kw = {"model": _fallback_model(), "model_settings": _FALLBACK_MODEL_SETTINGS}
+            # Strip ImageUrl parts for fallback models that don't support vision
+            if isinstance(msg, list):
+                text_parts = [p for p in msg if not isinstance(p, ImageUrl)]
+                if len(text_parts) < len(msg):
+                    text_parts.append("[images were attached but this model doesn't support vision]")
+                msg = text_parts if len(text_parts) > 1 else (text_parts[0] if text_parts else user_message)
         # Streaming mode: iterate nodes and stream text + thinking deltas
-        async with agent.iter(user_message, message_history=history, **model_kw) as run:
+        async with agent.iter(msg, message_history=history, **model_kw) as run:
             async for node in run:
                 if Agent.is_model_request_node(node):
                     in_thinking = False
